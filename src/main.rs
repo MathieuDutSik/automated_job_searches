@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
+mod adapters;
 mod ats;
 mod crawlers;
 mod db;
@@ -29,6 +30,13 @@ enum Cmd {
         /// Crawler name, or "all"
         name: String,
     },
+    /// Refresh job lists from ATS JSON APIs for known company slugs.
+    /// Iterates over every company in the DB matching the given ATS kind.
+    /// Use "all" to run every registered adapter.
+    Sync {
+        /// ATS name (greenhouse | ashby | lever), or "all"
+        name: String,
+    },
     /// List rows from the database
     List {
         #[command(subcommand)]
@@ -46,6 +54,11 @@ enum ListWhat {
     },
     Jobs {
         #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Print every company that has open jobs, with its jobs indented underneath.
+    ByCompany {
+        #[arg(long, default_value_t = 1000)]
         limit: usize,
     },
 }
@@ -98,6 +111,44 @@ async fn main() -> Result<()> {
                 anyhow::bail!("{failed} crawler(s) failed");
             }
         }
+        Cmd::Sync { name } => {
+            let to_run: Vec<Box<dyn adapters::AtsAdapter>> = if name == "all" {
+                adapters::all()
+            } else {
+                let known: Vec<&'static str> =
+                    adapters::all().iter().map(|a| a.kind().as_str()).collect();
+                let a = adapters::by_name(&name).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unknown ATS '{name}'. known: {} (or 'all')",
+                        known.join(", ")
+                    )
+                })?;
+                vec![a]
+            };
+            for adapter in to_run {
+                let label = format!("sync:{}", adapter.kind().as_str());
+                let run_id = db.start_run(&label)?;
+                match adapters::sync_all_for_kind(&db, adapter.as_ref()).await {
+                    Ok(rep) => {
+                        db.finish_run(run_id, true, None, rep.jobs_seen, rep.jobs_new, None)?;
+                        info!(
+                            kind = rep.kind,
+                            companies = rep.companies_synced,
+                            stale_404 = rep.companies_404,
+                            jobs_seen = rep.jobs_seen,
+                            jobs_new = rep.jobs_new,
+                            jobs_closed = rep.jobs_closed,
+                            "sync finished"
+                        );
+                    }
+                    Err(e) => {
+                        db.finish_run(run_id, false, None, 0, 0, Some(&e.to_string()))?;
+                        error!(kind = adapter.kind().as_str(), error = %e, "sync failed");
+                        return Err(e);
+                    }
+                }
+            }
+        }
         Cmd::List { what } => match what {
             ListWhat::Companies { limit } => {
                 for (name, kind, slug) in db.list_companies(limit)? {
@@ -107,6 +158,20 @@ async fn main() -> Result<()> {
             ListWhat::Jobs { limit } => {
                 for (company, title, location, url) in db.list_jobs(limit)? {
                     println!("{company} | {title} | {location} | {url}");
+                }
+            }
+            ListWhat::ByCompany { limit } => {
+                for (name, kind, slug, jobs) in db.list_by_company(limit)? {
+                    println!("{name} ({kind}:{slug})");
+                    for (title, location, url) in jobs {
+                        if location.is_empty() {
+                            println!("  - {title}");
+                        } else {
+                            println!("  - {title} | {location}");
+                        }
+                        println!("    {url}");
+                    }
+                    println!();
                 }
             }
         },

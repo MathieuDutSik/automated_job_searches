@@ -64,6 +64,18 @@ pub struct Db {
     conn: Connection,
 }
 
+pub struct JobUpsert<'a> {
+    pub company_id: i64,
+    pub kind: AtsKind,
+    pub external_id: &'a str,
+    pub title: &'a str,
+    pub location: Option<&'a str>,
+    pub department: Option<&'a str>,
+    pub apply_url: &'a str,
+    pub posted_at: Option<&'a str>,
+    pub raw_json: &'a str,
+}
+
 impl Db {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let conn = Connection::open(&path)
@@ -125,43 +137,101 @@ impl Db {
         Ok((id, is_new))
     }
 
-    pub fn upsert_job(
-        &self,
-        company_id: i64,
-        kind: AtsKind,
-        external_id: &str,
-        title: &str,
-        location: Option<&str>,
-        apply_url: &str,
-        raw_json: &str,
-    ) -> Result<(i64, bool)> {
+    pub fn upsert_job(&self, j: JobUpsert<'_>) -> Result<(i64, bool)> {
         let now = Utc::now().to_rfc3339();
         let tx = self.conn.unchecked_transaction()?;
         let existing: Option<i64> = tx
             .query_row(
                 "SELECT id FROM jobs WHERE ats_kind = ? AND external_id = ?",
-                params![kind.as_str(), external_id],
+                params![j.kind.as_str(), j.external_id],
                 |r| r.get(0),
             )
             .optional()?;
         let (id, is_new) = match existing {
             Some(id) => {
                 tx.execute(
-                    "UPDATE jobs SET last_seen = ?, title = ?, location = ?, apply_url = ?, closed_at = NULL WHERE id = ?",
-                    params![now, title, location, apply_url, id],
+                    "UPDATE jobs SET last_seen = ?, title = ?, location = ?, department = ?, apply_url = ?, posted_at = ?, closed_at = NULL WHERE id = ?",
+                    params![now, j.title, j.location, j.department, j.apply_url, j.posted_at, id],
                 )?;
                 (id, false)
             }
             None => {
                 tx.execute(
-                    "INSERT INTO jobs (company_id, ats_kind, external_id, title, location, apply_url, first_seen, last_seen, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    params![company_id, kind.as_str(), external_id, title, location, apply_url, now, now, raw_json],
+                    "INSERT INTO jobs (company_id, ats_kind, external_id, title, location, department, apply_url, posted_at, first_seen, last_seen, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![j.company_id, j.kind.as_str(), j.external_id, j.title, j.location, j.department, j.apply_url, j.posted_at, now, now, j.raw_json],
                 )?;
                 (tx.last_insert_rowid(), true)
             }
         };
         tx.commit()?;
         Ok((id, is_new))
+    }
+
+    /// Mark all open jobs for a given company that were last seen before
+    /// `sync_started` as closed. Used by ATS-adapter syncs to reflect job
+    /// disappearance: anything we didn't see in the latest fetch is gone.
+    /// Returns the number of jobs that were just closed.
+    pub fn mark_unseen_jobs_closed(
+        &self,
+        company_id: i64,
+        kind: AtsKind,
+        sync_started: &str,
+    ) -> Result<usize> {
+        let now = Utc::now().to_rfc3339();
+        let n = self.conn.execute(
+            "UPDATE jobs SET closed_at = ? WHERE company_id = ? AND ats_kind = ? AND closed_at IS NULL AND last_seen < ?",
+            params![now, company_id, kind.as_str(), sync_started],
+        )?;
+        Ok(n)
+    }
+
+    pub fn list_slugs_for_kind(&self, kind: AtsKind) -> Result<Vec<(i64, String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, ats_slug FROM companies WHERE ats_kind = ? ORDER BY ats_slug",
+        )?;
+        let rows = stmt
+            .query_map(params![kind.as_str()], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn list_by_company(
+        &self,
+        limit_companies: usize,
+    ) -> Result<Vec<(String, String, String, Vec<(String, String, String)>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, ats_kind, ats_slug FROM companies
+             WHERE id IN (SELECT DISTINCT company_id FROM jobs WHERE closed_at IS NULL)
+             ORDER BY name COLLATE NOCASE
+             LIMIT ?",
+        )?;
+        let companies: Vec<(i64, String, String, String)> = stmt
+            .query_map(params![limit_companies as i64], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut out = Vec::with_capacity(companies.len());
+        let mut jobs_stmt = self.conn.prepare(
+            "SELECT title, COALESCE(location, ''), apply_url
+               FROM jobs WHERE company_id = ? AND closed_at IS NULL
+               ORDER BY title COLLATE NOCASE",
+        )?;
+        for (id, name, kind, slug) in companies {
+            let jobs = jobs_stmt
+                .query_map(params![id], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            out.push((name, kind, slug, jobs));
+        }
+        Ok(out)
     }
 
     pub fn start_run(&self, source: &str) -> Result<i64> {

@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::ats::classify_or_other;
 use crate::crawlers::{CrawlReport, Crawler};
-use crate::db::Db;
+use crate::db::{Db, JobUpsert};
 use crate::http;
 
 const LIST_URL: &str = "https://web3.career/remote-jobs";
@@ -84,7 +84,17 @@ impl Crawler for Web3Career {
             }
 
             let external_id = ats.external_id.clone().unwrap_or_else(|| apply_url.clone());
-            match db.upsert_job(company_id, ats.kind, &external_id, title, None, &apply_url, "{}") {
+            match db.upsert_job(JobUpsert {
+                company_id,
+                kind: ats.kind,
+                external_id: &external_id,
+                title,
+                location: None,
+                department: None,
+                apply_url: &apply_url,
+                posted_at: None,
+                raw_json: "{}",
+            }) {
                 Ok((_, is_new)) => {
                     if is_new {
                         report.jobs_new += 1;
