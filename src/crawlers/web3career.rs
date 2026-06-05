@@ -38,14 +38,15 @@ impl Crawler for Web3Career {
             return Ok(report);
         }
 
-        let companies = extract_companies(&body);
-        report.companies_seen = companies.len() as u64;
+        let links = extract_links(&body);
+        report.links_examined = links.len() as u64;
 
-        for (name, url) in companies {
+        for (name, url) in links {
             let Some(ats) = classify_apply_url(&url) else {
                 debug!(url = %url, "unrecognized ATS, skipping");
                 continue;
             };
+            report.companies_matched += 1;
             match db.upsert_company(&name, ats.kind, &ats.slug, SOURCE, Some(&url)) {
                 Ok((_, is_new)) => {
                     if is_new {
@@ -61,11 +62,9 @@ impl Crawler for Web3Career {
     }
 }
 
-/// Extract (company_name_hint, outbound_url) pairs from the page.
-/// Strategy: walk every anchor, keep the ones whose href is a known ATS URL.
-/// The anchor's visible text is a reasonable name hint; we'll lean on the
-/// classifier's slug as the authoritative key.
-fn extract_companies(html: &str) -> Vec<(String, String)> {
+/// Walk every <a href> on the page and return (anchor_text, normalized_href).
+/// The classifier decides which of those are ATS URLs worth keeping.
+fn extract_links(html: &str) -> Vec<(String, String)> {
     let doc = Html::parse_document(html);
     let a = Selector::parse("a[href]").expect("static selector");
     let mut seen: HashSet<String> = HashSet::new();

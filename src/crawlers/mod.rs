@@ -9,7 +9,11 @@ pub mod web3career;
 pub struct CrawlReport {
     pub source: &'static str,
     pub http_status: Option<u16>,
-    pub companies_seen: u64,
+    /// Outbound links the crawler examined (e.g. <a href>s on the page).
+    pub links_examined: u64,
+    /// Links that matched a known ATS URL pattern.
+    pub companies_matched: u64,
+    /// New rows inserted into `companies` (excludes existing rows that were just refreshed).
     pub companies_new: u64,
 }
 
@@ -19,9 +23,10 @@ pub trait Crawler {
     async fn run(&self, db: &Db) -> Result<CrawlReport>;
 }
 
+pub fn all() -> Vec<Box<dyn Crawler>> {
+    vec![Box::new(web3career::Web3Career)]
+}
+
 pub fn by_name(name: &str) -> Option<Box<dyn Crawler>> {
-    match name {
-        "web3career" => Some(Box::new(web3career::Web3Career)),
-        _ => None,
-    }
+    all().into_iter().find(|c| c.name() == name)
 }
