@@ -74,9 +74,12 @@ impl Db {
         Ok(Self { conn })
     }
 
+    /// `name_hint` is the authoritative display name when we know it. Pass
+    /// `None` if we only have a slug — the slug will be used on first insert
+    /// and existing names won't be clobbered.
     pub fn upsert_company(
         &self,
-        name: &str,
+        name_hint: Option<&str>,
         kind: AtsKind,
         slug: &str,
         discovered_via: &str,
@@ -93,13 +96,20 @@ impl Db {
             .optional()?;
         let (id, is_new) = match existing {
             Some(id) => {
-                tx.execute(
-                    "UPDATE companies SET last_seen = ?, name = CASE WHEN ? <> '' THEN ? ELSE name END WHERE id = ?",
-                    params![now, name, name, id],
-                )?;
+                match name_hint {
+                    Some(n) => tx.execute(
+                        "UPDATE companies SET last_seen = ?, name = ? WHERE id = ?",
+                        params![now, n, id],
+                    )?,
+                    None => tx.execute(
+                        "UPDATE companies SET last_seen = ? WHERE id = ?",
+                        params![now, id],
+                    )?,
+                };
                 (id, false)
             }
             None => {
+                let name = name_hint.unwrap_or(slug);
                 tx.execute(
                     "INSERT INTO companies (name, ats_kind, ats_slug, first_seen, last_seen) VALUES (?, ?, ?, ?, ?)",
                     params![name, kind.as_str(), slug, now, now],
@@ -111,6 +121,45 @@ impl Db {
             "INSERT INTO company_discoveries (company_id, discovered_via, discovered_at, source_url) VALUES (?, ?, ?, ?)",
             params![id, discovered_via, now, source_url],
         )?;
+        tx.commit()?;
+        Ok((id, is_new))
+    }
+
+    pub fn upsert_job(
+        &self,
+        company_id: i64,
+        kind: AtsKind,
+        external_id: &str,
+        title: &str,
+        location: Option<&str>,
+        apply_url: &str,
+        raw_json: &str,
+    ) -> Result<(i64, bool)> {
+        let now = Utc::now().to_rfc3339();
+        let tx = self.conn.unchecked_transaction()?;
+        let existing: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM jobs WHERE ats_kind = ? AND external_id = ?",
+                params![kind.as_str(), external_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let (id, is_new) = match existing {
+            Some(id) => {
+                tx.execute(
+                    "UPDATE jobs SET last_seen = ?, title = ?, location = ?, apply_url = ?, closed_at = NULL WHERE id = ?",
+                    params![now, title, location, apply_url, id],
+                )?;
+                (id, false)
+            }
+            None => {
+                tx.execute(
+                    "INSERT INTO jobs (company_id, ats_kind, external_id, title, location, apply_url, first_seen, last_seen, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![company_id, kind.as_str(), external_id, title, location, apply_url, now, now, raw_json],
+                )?;
+                (tx.last_insert_rowid(), true)
+            }
+        };
         tx.commit()?;
         Ok((id, is_new))
     }

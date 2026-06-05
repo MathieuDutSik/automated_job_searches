@@ -18,6 +18,11 @@ pub enum AtsKind {
     Jazzhr,
     Workday,
     Comeet,
+    /// Catch-all for jobs whose apply URL is a company's own careers page,
+    /// a sub-aggregator (jobs.solana.com, getro, ...), or anything else we
+    /// don't recognize as a major ATS. Slug is the URL host so these still
+    /// group meaningfully in `list companies`.
+    Other,
 }
 
 impl AtsKind {
@@ -37,6 +42,7 @@ impl AtsKind {
             AtsKind::Jazzhr => "jazzhr",
             AtsKind::Workday => "workday",
             AtsKind::Comeet => "comeet",
+            AtsKind::Other => "other",
         }
     }
 }
@@ -153,6 +159,41 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
     None
 }
 
+/// Detect URLs that are obvious login/signup walls rather than real apply
+/// destinations. Used to filter out things like
+/// `https://network.bondex.app/auth/login?signup=web3.career&...` where the
+/// site has hidden the real employer URL behind a sign-up gate.
+pub fn is_auth_wall(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    lower.contains("/auth/login")
+        || lower.contains("/auth/signup")
+        || lower.contains("?signup=")
+        || lower.contains("&signup=")
+}
+
+/// Classify the apply URL into a known ATS, OR fall back to `AtsKind::Other`
+/// with the URL host as slug. Returns `None` if the URL is unparseable, has
+/// no host, or is detected as an auth/signup wall.
+pub fn classify_or_other(url: &str) -> Option<AtsRef> {
+    if is_auth_wall(url) {
+        return None;
+    }
+    if let Some(r) = classify_apply_url(url) {
+        return Some(r);
+    }
+    let u = Url::parse(url).ok()?;
+    let host = u.host_str()?.to_ascii_lowercase();
+    let external_id = {
+        let p = u.path().trim_matches('/');
+        if p.is_empty() {
+            None
+        } else {
+            Some(p.to_string())
+        }
+    };
+    Some(AtsRef { kind: AtsKind::Other, slug: host, external_id })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,5 +237,25 @@ mod tests {
     #[test]
     fn unknown_passes_through() {
         assert!(classify_apply_url("https://example.com/careers").is_none());
+    }
+
+    #[test]
+    fn other_catches_unknown() {
+        let r = classify_or_other("https://jobs.solana.com/companies/ondo-finance/jobs/81464556-x").unwrap();
+        assert_eq!(r.kind, AtsKind::Other);
+        assert_eq!(r.slug, "jobs.solana.com");
+        assert_eq!(r.external_id.as_deref(), Some("companies/ondo-finance/jobs/81464556-x"));
+    }
+
+    #[test]
+    fn other_returns_none_for_bad_url() {
+        assert!(classify_or_other("mailto:hr@acme.com").is_none());
+    }
+
+    #[test]
+    fn auth_wall_skipped() {
+        let url = "https://network.bondex.app/auth/login?signup=web3.career&utm_source=web3.career";
+        assert!(is_auth_wall(url));
+        assert!(classify_or_other(url).is_none());
     }
 }

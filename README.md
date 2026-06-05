@@ -66,8 +66,10 @@ src/
   http.rs            # shared reqwest client (UA, timeout, gzip/brotli)
   ats.rs             # classify_apply_url() — recognizes 14 ATS URL patterns
   crawlers/
-    mod.rs           # trait Crawler + registry (`all()`, `by_name()`)
-    web3career.rs    # crawler for https://web3.career/remote-jobs
+    mod.rs                   # trait Crawler + registry (`all()`, `by_name()`)
+    cryptocurrencyjobs.rs    # RSS feed + per-detail-page apply URL extraction
+    hn_whoshiring.rs         # Algolia API, latest "Who is hiring?" thread
+    web3career.rs            # listing + detail crawl (gated by Bondex auth wall)
 ```
 
 Each crawler implements:
@@ -86,24 +88,41 @@ extract ATS URLs (or HTML it can parse into `(company, ats_kind, ats_slug)`
 tuples) and call `db.upsert_company(...)`. Once registered, it's picked up by
 both `ajs crawl <name>` and `ajs crawl all`.
 
-## Status (MVP)
+## Status
 
-- Builds, tests pass (6 unit tests for the ATS URL classifier).
-- `web3career` crawler fetches the page and harvests outbound `<a href>` links
-  through the classifier. **Currently finds 0 ATS matches** because
-  web3.career routes apply links through internal `/apply/{id}` redirects
-  rather than linking directly to ATS boards. Next iteration: either follow
-  detail pages, or start with a site that exposes direct ATS links.
-- No ATS adapters yet — once we have company slugs, the next phase is to add
-  per-ATS adapters (Greenhouse, Ashby, Lever) that read
-  `companies WHERE ats_kind=?` and pull the full job list via the ATS JSON API.
+- 14 unit tests pass.
+- Three crawlers wired up:
+  - **`cryptocurrencyjobs`** — fetches the RSS feed at `/index.xml`, then for
+    each item fetches the detail page and extracts the apply URL via the
+    `?ref=cryptocurrencyjobs.co` marker. Typically produces ~70-80 jobs/run.
+  - **`hn_whoshiring`** — finds the latest *Ask HN: Who is hiring?* thread via
+    the Algolia search API, fetches all top-level comments, extracts URLs
+    from comment HTML, prefers known-ATS URLs over generic `Other`.
+    Typically produces ~200+ jobs/run.
+  - **`web3career`** — parked but kept. Apply URLs are gated behind a
+    `network.bondex.app` sign-up wall; the `is_auth_wall()` filter (in
+    `ats.rs`) correctly rejects them, so this crawler now contributes 0 rows
+    instead of polluting the DB. Re-enable later via cookie-paste auth or a
+    headless browser if needed.
+- The `Other` ATS kind catches anything not matching a known ATS — company
+  careers pages, sub-aggregators (`jobs.solana.com`, `careers.smartrecruiters.com`,
+  EU Greenhouse mirrors, ...). These aren't dropped — they're stored with the
+  URL host as slug so you can still see them in `list jobs`.
+- **No ATS adapters yet.** Now that we have real `(ats_kind, ats_slug)` rows
+  for Greenhouse / Ashby / Lever / Workable / Breezy / Jazzhr / ..., the next
+  phase is to add per-ATS adapters that read `companies WHERE ats_kind=?` and
+  pull the full job list via the ATS JSON API for richer/fresher data.
 
-## Roadmap (short)
+## Roadmap
 
-1. Get one crawler producing real `(ats_kind, ats_slug)` rows
-   (candidates: `cryptocurrencyjobs.co`, `rustjobs.dev`, HN Who's Hiring).
-2. Add a Greenhouse adapter (`boards-api.greenhouse.io/v1/boards/{slug}/jobs`)
-   that populates the `jobs` table for known slugs.
-3. Add Ashby and Lever adapters (same pattern, different JSON shape).
-4. Add a `discover` command that does search-engine queries
-   (`site:boards.greenhouse.io ...`) via Google CSE for slug discovery.
+1. **Greenhouse adapter** — `https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true`.
+   First ATS adapter; cleanest public API.
+2. **Ashby adapter** — `https://api.ashbyhq.com/posting-api/job-board/{slug}`.
+3. **Lever adapter** — `https://api.lever.co/v0/postings/{slug}?mode=json`.
+4. **`discover` command** — Google Custom Search Engine queries like
+   `site:boards.greenhouse.io "engineer" "remote"` to find new ATS slugs
+   beyond what crawlers surface.
+5. **More crawlers** — `weworkremotely.com`, `remote.co`, `jobspresso.co`,
+   getro VC-portfolio boards.
+6. **Auth-walled sources** — cookie-paste support for web3.career; revisit
+   rustjobs.dev (Vercel JS challenge) with a headless browser if it's worth it.

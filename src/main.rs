@@ -76,20 +76,16 @@ async fn main() -> Result<()> {
                 let run_id = db.start_run(crawler.name())?;
                 match crawler.run(&db).await {
                     Ok(rep) => {
-                        db.finish_run(run_id, true, rep.http_status, rep.companies_matched, rep.companies_new, None)?;
+                        db.finish_run(run_id, true, rep.http_status, rep.jobs_matched, rep.jobs_new, None)?;
                         info!(
                             source = rep.source,
-                            links_examined = rep.links_examined,
-                            companies_matched = rep.companies_matched,
+                            pages = rep.pages_visited,
+                            apply_links = rep.apply_links_found,
+                            jobs_matched = rep.jobs_matched,
+                            jobs_new = rep.jobs_new,
                             companies_new = rep.companies_new,
                             "crawl finished"
                         );
-                        if rep.links_examined > 0 && rep.companies_matched == 0 {
-                            tracing::warn!(
-                                source = rep.source,
-                                "0 ATS matches: apply links appear to go through the site's own redirect (e.g. /apply/<id>) rather than directly to boards.greenhouse.io / jobs.ashbyhq.com / etc. Run with RUST_LOG=ajs=debug to dump the URLs the crawler saw."
-                            );
-                        }
                     }
                     Err(e) => {
                         db.finish_run(run_id, false, None, 0, 0, Some(&e.to_string()))?;
