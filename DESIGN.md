@@ -81,9 +81,11 @@ src/
   adapters/          # sync: for a known slug, pull all live jobs from ATS API
     mod.rs           # trait AtsAdapter + registry + sync_all_for_kind()
     ...              # one module per ATS — see SOURCES.md
-  search/            # search-engine backends
-    mod.rs           # trait SearchEngine + SearchHit
-    brave.rs         # Brave Search API (reads BRAVE_API_KEY env)
+  search/            # search-engine backends (selected at runtime via --engine)
+    mod.rs           # trait SearchEngine + SearchHit + from_env(name) factory
+    brave.rs         # Brave Search API   — reads BRAVE_API_KEY
+    google.rs        # Google CSE         — reads GOOGLE_API_KEY + GOOGLE_CSE_ID
+    you.rs           # you.com Search API — reads YDC_API_KEY
 ```
 
 ## Crawler trait
@@ -160,6 +162,14 @@ pub trait SearchEngine {
 pub struct SearchHit { pub url: String }
 ```
 
+Three backends ship out of the box; CLI picks via `discover --engine <name>`:
+
+| name | env vars | quirks |
+|---|---|---|
+| `brave` | `BRAVE_API_KEY` | Free 2k/mo, 1 req/s. `inurl:` is non-functional; `site:` subdomain inclusion is patchy (see [SOURCES.md](SOURCES.md)). |
+| `google` | `GOOGLE_API_KEY`, `GOOGLE_CSE_ID` | 100/day free, $5/1k after. Best recall and operator support; `num` capped at 10 per request. |
+| `you` | `YDC_API_KEY` | Free tier, no rate limit advertised on free; `num_web_results` honored. |
+
 The `discover.rs` runner is engine-agnostic: it iterates each ATS's query
 templates, feeds every returned URL through `ats::classify_apply_url`
 (strict — not the `_or_other` fallback), discards everything whose `kind`
@@ -167,6 +177,16 @@ doesn't match the plan's expected kind, and upserts whatever survives.
 This filtering is important — search engines return a lot of unrelated
 hits (Reddit threads, news articles, doc pages) that mention the host
 name without being an actual ATS apply URL.
+
+### Adding a new SearchEngine backend
+
+1. Create `src/search/<name>.rs` with a struct implementing `SearchEngine`.
+2. Add a `from_env()` constructor that reads the required env vars and
+   errors clearly if any are missing.
+3. Register in `src/search/mod.rs`:
+   - `pub mod <name>;`
+   - extend the `ENGINE_NAMES` slice and the `from_env(name)` factory's
+     match statement.
 
 ## Adding a new ATS adapter
 

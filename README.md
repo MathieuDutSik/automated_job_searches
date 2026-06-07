@@ -28,9 +28,16 @@ company from the ATS's public JSON API.
 ajs crawl <name>                  # one crawler (`ajs crawl --help` for names)
 ajs crawl all                     # every registered crawler
 
-# Phase 1b: discover companies via web-search queries (Brave; needs BRAVE_API_KEY)
-ajs discover <ats>                # one ATS (`ajs discover --help` for names)
-ajs discover all                  # every registered ATS plan
+# Phase 1b: discover companies via web-search queries
+ajs discover <ats>                          # one ATS, default engine (brave)
+ajs discover all                            # every ATS plan, default engine
+ajs discover ashby --engine google          # use Google CSE for this run
+ajs discover bamboohr --engine you          # use you.com for this run
+#
+# Engines and the env vars they need:
+#   brave  → BRAVE_API_KEY                                   (default; 2k q/mo free)
+#   google → GOOGLE_API_KEY + GOOGLE_CSE_ID                  (100 q/day free, $5/1k after)
+#   you    → YDC_API_KEY                                      (free tier ~5k q/mo)
 
 # Phase 2: refresh full job lists from the ATS JSON APIs
 ajs sync <ats>                    # one ATS (iterates every company of that kind)

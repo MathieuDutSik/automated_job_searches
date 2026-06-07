@@ -112,12 +112,48 @@ queries through a web-search engine, classifying each returned URL, and
 upserting matching slugs as new `companies` rows that `sync` will then
 hit. Query templates per ATS live in `src/discover.rs::PLANS`.
 
+### Available engines (`--engine <name>`)
+
+| Engine | Default | Env vars | Free tier | `count` cap |
+|---|---|---|---|---|
+| `brave` | ✓ | `BRAVE_API_KEY` | 2k/mo, 1 req/s | 20 |
+| `google` |   | `GOOGLE_API_KEY`, `GOOGLE_CSE_ID` | 100/day | 10 |
+| `you` |   | `YDC_API_KEY` | ~5k/mo | depends on plan |
+
 ### Brave Search backend
 
-- Needs `BRAVE_API_KEY` env var.
-- Free tier: ~2000 queries/month, 1 req/s rate limit (the runner sleeps
-  1.1s between queries).
-- Caps `count` at 20 results per query.
+- Default engine — selected when `--engine` is omitted.
+- 1.1s politeness sleep between queries to stay under the free-tier rate
+  limit.
+- `count` is hard-capped at 20 per Brave's API.
+
+### Google CSE backend
+
+Highest-quality recall of the three but requires one-time off-the-terminal
+setup:
+
+1. **Programmable Search Engine** — go to
+   <https://programmablesearchengine.google.com/>, "Add", set any name,
+   under "What to search?" pick **"Search the entire web"** (critical — by
+   default it only searches sites you list). Save and copy the **Search
+   engine ID** (looks like `017576662512468239146:omuauf_lfve`).
+
+2. **Custom Search API key** — Google Cloud Console → create or pick a
+   project → APIs & Services → enable **"Custom Search API"** → Credentials
+   → "Create credentials" → API key. Optionally restrict the key to the
+   Custom Search API.
+
+3. **Env vars** — `export GOOGLE_API_KEY=...` and `export GOOGLE_CSE_ID=...`.
+
+`num` (results per query) is capped at 10 by the API; deeper pagination
+needs the `start` query parameter and a loop — not wired today.
+
+### You.com backend
+
+- Sign up at <https://api.you.com/>, grab the API key, export as
+  `YDC_API_KEY`. No CSE-style configuration.
+- Newest of the three; less battle-tested for `site:` queries than the
+  other two.
 
 ### Per-ATS observations on Brave
 
@@ -143,13 +179,20 @@ hit. Query templates per ATS live in `src/discover.rs::PLANS`.
   don't carry an expected careers/jobs path component. Without these,
   marketing pages would upsert as bogus "companies".
 
-### Upgrading to Google CSE later
+### When to override the default engine
 
-Google CSE supports `inurl:` properly and indexes the small subdomain
-hosts that Brave deprioritizes. When BambooHR recall starts to matter
-more than it does today, the `SearchEngine` trait gives a one-file path:
-implement `src/search/google.rs`, swap which engine `Cmd::Discover`
-constructs.
+Brave is fine for the four TLD-distinguished ATSes (Greenhouse, Ashby,
+Lever, SmartRecruiters) and for Recruitee / Workday — those return clean
+subdomain results out of the box. Switch with `--engine google` when:
+
+- Brave's index feels stale for a given ATS (Brave tends to keep
+  long-closed jobs in `site:` results).
+- Recall on subdomain-pattern ATSes matters — Google's `site:bamboohr.com`
+  returns real per-tenant boards, not just the `www.` marketing site.
+- You're discovering a new ATS for the first time and want maximum recall.
+
+`--engine you` is a third option mostly worth trying when you want to
+compare; the API surface is the smallest of the three.
 
 ## Candidates evaluated and rejected
 

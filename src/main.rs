@@ -40,14 +40,21 @@ enum Cmd {
         /// recruitee | workday), or "all"
         name: String,
     },
-    /// Discover new ATS company slugs via web-search engine queries
-    /// (currently Brave; reads BRAVE_API_KEY from the environment).
-    /// Each ATS has a curated set of `site:` / `inurl:` queries; classified
+    /// Discover new ATS company slugs via web-search engine queries.
+    /// Each ATS has a curated set of `site:` / phrase queries; classified
     /// hits become new `companies` rows that `sync` will then pull jobs for.
+    ///
+    /// Choose the engine with `--engine`:
+    ///   brave  — needs BRAVE_API_KEY  (default; broadest free tier)
+    ///   google — needs GOOGLE_API_KEY + GOOGLE_CSE_ID (Programmable Search Engine)
+    ///   you    — needs YDC_API_KEY    (you.com)
     Discover {
         /// ATS name to discover for (greenhouse | ashby | lever |
         /// smartrecruiters | bamboohr | recruitee | workday), or "all"
         name: String,
+        /// Search engine backend to use.
+        #[arg(long, default_value = "brave")]
+        engine: String,
     },
     /// List rows from the database
     List {
@@ -238,8 +245,8 @@ async fn main() -> Result<()> {
             println!("companies: {companies}");
             println!("open jobs: {jobs}");
         }
-        Cmd::Discover { name } => {
-            let engine = search::brave::Brave::from_env()?;
+        Cmd::Discover { name, engine } => {
+            let engine = search::from_env(&engine)?;
             let plans: Vec<&'static discover::DiscoverPlan> = if name == "all" {
                 discover::PLANS.iter().collect()
             } else {
@@ -256,7 +263,7 @@ async fn main() -> Result<()> {
             for plan in plans {
                 let label = format!("discover:{}", plan.kind.as_str());
                 let run_id = db.start_run(&label)?;
-                match discover::run_plan(&db, &engine, plan).await {
+                match discover::run_plan(&db, engine.as_ref(), plan).await {
                     Ok(rep) => {
                         db.finish_run(
                             run_id,
