@@ -127,8 +127,11 @@ src/
   crawlers/                  # discovery: find (company, ats_kind, ats_slug)
     mod.rs                   # trait Crawler + registry
     cryptocurrencyjobs.rs    # RSS feed + per-detail-page apply URL extraction
+    cryptojobs.rs            # cryptojobs.com RSS feed (structured externalApplicationLink)
     hn_whoshiring.rs         # Algolia API, latest "Who is hiring?" thread
+    thehub.rs                # thehub.io listing + detail page apply-URL extraction
     web3career.rs            # listing + detail crawl (gated by Bondex auth wall)
+    workingnomads.rs         # workingnomads.com JSON API + redirect-follow to real apply URL
   adapters/                  # sync: for a known slug, pull all live jobs from ATS API
     mod.rs                   # trait AtsAdapter + registry + sync_all_for_kind()
     greenhouse.rs            # boards-api.greenhouse.io/v1/boards/{slug}/jobs
@@ -163,8 +166,8 @@ delay, upserting, 404 handling, and the close-unseen-jobs sweep.
 
 ## Status
 
-- 14 unit tests pass.
-- Three crawlers wired up:
+- 19 unit tests pass.
+- Six crawlers wired up:
   - **`cryptocurrencyjobs`** — fetches the RSS feed at `/index.xml`, then for
     each item fetches the detail page and extracts the apply URL via the
     `?ref=cryptocurrencyjobs.co` marker. Typically produces ~70-80 jobs/run.
@@ -172,11 +175,53 @@ delay, upserting, 404 handling, and the close-unseen-jobs sweep.
     the Algolia search API, fetches all top-level comments, extracts URLs
     from comment HTML, prefers known-ATS URLs over generic `Other`.
     Typically produces ~200+ jobs/run.
+  - **`cryptojobs`** — RSS feed at `cryptojobs.com/jobs/feed`. Structured
+    fields: `externalApplicationLink` (preferred), `workFlexibility`
+    (Remote/Onsite → `remote` flag), `category`, `description`. ~36 jobs/run.
+  - **`thehub`** — Nordic startup board. Scrapes `/jobs` listing for
+    `/jobs/{24-hex-id}` links, fetches each detail page, picks the first
+    outbound non-social anchor as the apply URL. Pagination beyond page 1 is
+    JS-driven so this only sees the first ~16 jobs per crawl; the rest only
+    come in as new postings appear on page 1. ~3-6 jobs/run after dedup.
+  - **`workingnomads`** — JSON API at `/api/exposed_jobs/`. Each entry's
+    `url` is a `/job/go/{id}/` 302 to the real apply URL — the crawler
+    HEAD-follows the redirect to capture the destination, then runs it
+    through `classify_or_other` so jobs land under the actual ATS company,
+    not under `workingnomads.com`. ~42 jobs/run, every one tagged remote.
   - **`web3career`** — parked but kept. Apply URLs are gated behind a
     `network.bondex.app` sign-up wall; the `is_auth_wall()` filter (in
     `ats.rs`) correctly rejects them, so this crawler now contributes 0 rows
     instead of polluting the DB. Re-enable later via cookie-paste auth or a
     headless browser if needed.
+
+### Candidates evaluated and rejected
+
+Triaged a batch of aggregators; the following were not added, with reason:
+
+| Site | Why skipped |
+|---|---|
+| `startup.jobs` | Cloudflare managed challenge (`cf-mitigated: challenge`) on every path. Needs headless browser. |
+| `remotifyeurope.com` | Next.js SPA, no `__NEXT_DATA__` blob — jobs only render after JS. |
+| `remoteineurope.com` | Server-rendered `/job/{slug}` exists but apply-URL discovery is hidden behind detail-page UI; revisit later. |
+| `euremotejobs.com` | Front page 200 but `/jobs/` and `/feed/` return 403 — selective anti-bot. |
+| `us.welcometothejungle.com` | Next.js SPA — only nav + one `/companies/` link in initial HTML. |
+| `trueup.io` | 403 on Chrome UA. |
+| `workinstartups.com` | 429 rate-limited from the first probe. |
+| `builtin.com` | Server-rendered with `/job/{slug}/{id}` URLs but 383KB pages at scale; deferred — would need careful rate limiting. |
+| `eu-startups.com` | 403 on Chrome UA. |
+| `remote100k.com` | Cloudflare `challenges.cloudflare.com` script embedded; only category nav in SSR HTML. |
+| `sailonchain.com` | Next.js SPA; no embedded JSON blob. |
+| `laborx.com` | `/freelance-jobs/` 301→404, target is broken. |
+| `globallogic.com` | 403. |
+| `europeanremote.com` | Angular SPA (`ng-version`, `_ngcontent-*`); only 1 outbound apply URL reaches the static HTML — built and discarded after measuring real yield. |
+| `wearedevelopers.com` | Server-rendered but only ~2 EU-remote results visible at a time and apply URLs are internal `/en/companies/{cid}/{jid}/...` — low yield for the effort. |
+| `rustjobs.dev` | Vercel JS challenge (already noted in original roadmap). |
+
+Three rough patterns to watch for: Cloudflare/anti-bot (`startup.jobs`, `trueup.io`, `eu-startups.com`, `globallogic.com`), JS-only SPAs with no SSR data
+(`remotifyeurope.com`, `us.welcometothejungle.com`, `sailonchain.com`, `europeanremote.com`), and rate limiting on first contact (`workinstartups.com`,
+`remote100k.com`). Any of these could be re-enabled with a headless-browser
+scraper, but that's a much bigger lift than the current `reqwest`-based
+pattern.
 - The `Other` ATS kind catches anything not matching a known ATS — company
   careers pages, sub-aggregators (`jobs.solana.com`, `careers.smartrecruiters.com`,
   EU Greenhouse mirrors, ...). These aren't dropped — they're stored with the

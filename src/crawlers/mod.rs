@@ -4,8 +4,11 @@ use async_trait::async_trait;
 use crate::db::Db;
 
 pub mod cryptocurrencyjobs;
+pub mod cryptojobs;
 pub mod hn_whoshiring;
+pub mod thehub;
 pub mod web3career;
+pub mod workingnomads;
 
 #[derive(Debug, Default)]
 pub struct CrawlReport {
@@ -32,8 +35,11 @@ pub trait Crawler {
 pub fn all() -> Vec<Box<dyn Crawler>> {
     vec![
         Box::new(cryptocurrencyjobs::CryptocurrencyJobs),
+        Box::new(cryptojobs::CryptoJobs),
         Box::new(hn_whoshiring::HnWhosHiring),
+        Box::new(thehub::TheHub),
         Box::new(web3career::Web3Career),
+        Box::new(workingnomads::WorkingNomads),
     ]
 }
 
