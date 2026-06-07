@@ -33,7 +33,9 @@ impl AtsAdapter for Ashby {
     }
 
     async fn fetch_jobs(&self, slug: &str) -> Result<Vec<AdapterJob>> {
-        let url = format!("https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true");
+        let url = format!(
+            "https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true"
+        );
         let client = http::client()?;
         let Some(value) = fetch_value_or_none_on_404(&client, &url).await? else {
             anyhow::bail!("404")

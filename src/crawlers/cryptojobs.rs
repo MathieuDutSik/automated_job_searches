@@ -129,8 +129,12 @@ fn parse_rss_items(xml: &str) -> Vec<CryptoJobsItem> {
     let mut out = Vec::new();
     for cap in item_re.captures_iter(xml) {
         let block = &cap[1];
-        let Some(title) = extract_cdata(block, "title") else { continue };
-        let Some(link) = extract_cdata(block, "link") else { continue };
+        let Some(title) = extract_cdata(block, "title") else {
+            continue;
+        };
+        let Some(link) = extract_cdata(block, "link") else {
+            continue;
+        };
         out.push(CryptoJobsItem {
             title,
             link,
@@ -152,10 +156,7 @@ fn extract_cdata(block: &str, tag: &str) -> Option<String> {
     let pat = format!(r"(?s)<{tag}>\s*(?:<!\[CDATA\[(.*?)\]\]>|([^<]*))\s*</{tag}>");
     let re = Regex::new(&pat).ok()?;
     let cap = re.captures(block)?;
-    let raw = cap
-        .get(1)
-        .or_else(|| cap.get(2))
-        .map(|m| m.as_str())?;
+    let raw = cap.get(1).or_else(|| cap.get(2)).map(|m| m.as_str())?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         None
@@ -209,7 +210,10 @@ mod tests {
         assert_eq!(it.category.as_deref(), Some("Blockchain Development"));
         assert_eq!(it.remote_flag(), Some(true));
         assert_eq!(it.job_location, None); // empty CDATA → None
-        assert_eq!(it.external_application_link.as_deref(), Some("https://boards.greenhouse.io/acme/jobs/1"));
+        assert_eq!(
+            it.external_application_link.as_deref(),
+            Some("https://boards.greenhouse.io/acme/jobs/1")
+        );
         assert_eq!(it.description.as_deref(), Some("Build & ship."));
     }
 }

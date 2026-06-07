@@ -38,7 +38,11 @@ impl Crawler for WorkingNomads {
     async fn run(&self, db: &Db) -> Result<CrawlReport> {
         let client = http::client()?;
         info!(url = API_URL, "fetching JSON");
-        let resp = client.get(API_URL).send().await.context("GET workingnomads API")?;
+        let resp = client
+            .get(API_URL)
+            .send()
+            .await
+            .context("GET workingnomads API")?;
         let status = resp.status();
 
         let mut report = CrawlReport {
@@ -93,7 +97,10 @@ impl Crawler for WorkingNomads {
 
             let external_id = ats.external_id.clone().unwrap_or_else(|| apply_url.clone());
             let raw_json = serde_json::to_string(&job).unwrap_or_else(|_| "{}".to_string());
-            let description = job.description.as_deref().map(|d| strip_html_tags(d.to_string()));
+            let description = job
+                .description
+                .as_deref()
+                .map(|d| strip_html_tags(d.to_string()));
             let remote = job
                 .location
                 .as_deref()

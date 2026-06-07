@@ -72,10 +72,16 @@ impl Crawler for HnWhosHiring {
             // Prefer a known ATS over a generic Other classification.
             let mut chosen: Option<(String, crate::ats::AtsRef)> = None;
             for u in urls {
-                let Some(r) = classify_or_other(&u) else { continue };
+                let Some(r) = classify_or_other(&u) else {
+                    continue;
+                };
                 let promote = match (&chosen, r.kind) {
                     (None, _) => true,
-                    (Some((_, prev)), new) if prev.kind == AtsKind::Other && new != AtsKind::Other => true,
+                    (Some((_, prev)), new)
+                        if prev.kind == AtsKind::Other && new != AtsKind::Other =>
+                    {
+                        true
+                    }
                     _ => false,
                 };
                 if promote {
@@ -136,8 +142,7 @@ impl Crawler for HnWhosHiring {
 
 async fn find_latest_thread(client: &Client) -> Result<String> {
     static TITLE_RE: OnceLock<Regex> = OnceLock::new();
-    let title_re =
-        TITLE_RE.get_or_init(|| Regex::new(r"(?i)Ask HN:?\s*Who is hiring\?").unwrap());
+    let title_re = TITLE_RE.get_or_init(|| Regex::new(r"(?i)Ask HN:?\s*Who is hiring\?").unwrap());
 
     let resp: SearchResp = client.get(SEARCH_URL).send().await?.json().await?;
     for hit in resp.hits {
@@ -219,7 +224,10 @@ mod tests {
 
     #[test]
     fn company_hint_from_title() {
-        assert_eq!(extract_company_hint("Acme | SWE | Remote"), Some("Acme".to_string()));
+        assert_eq!(
+            extract_company_hint("Acme | SWE | Remote"),
+            Some("Acme".to_string())
+        );
         assert_eq!(
             extract_company_hint("Adacore | Software Engineers | Full-time | Remote"),
             Some("Adacore".to_string())

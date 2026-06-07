@@ -19,8 +19,7 @@ impl Google {
     }
 
     pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("GOOGLE_API_KEY")
-            .context("GOOGLE_API_KEY env var not set")?;
+        let api_key = std::env::var("GOOGLE_API_KEY").context("GOOGLE_API_KEY env var not set")?;
         let cse_id = std::env::var("GOOGLE_CSE_ID")
             .context("GOOGLE_CSE_ID env var not set (create a Programmable Search Engine at https://programmablesearchengine.google.com/ with \"Search the entire web\" enabled, then export its ID)")?;
         if api_key.trim().is_empty() || cse_id.trim().is_empty() {

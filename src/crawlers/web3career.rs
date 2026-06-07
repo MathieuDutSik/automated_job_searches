@@ -30,7 +30,11 @@ impl Crawler for Web3Career {
         let resp = client.get(LIST_URL).send().await.context("GET listing")?;
         let status = resp.status();
         let body = resp.text().await.context("read listing body")?;
-        info!(status = status.as_u16(), bytes = body.len(), "listing fetched");
+        info!(
+            status = status.as_u16(),
+            bytes = body.len(),
+            "listing fetched"
+        );
 
         let mut report = CrawlReport {
             source: SOURCE,
@@ -119,9 +123,13 @@ fn extract_detail_links(html: &str) -> Vec<(String, String)> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
     for el in doc.select(&a) {
-        let Some(href) = el.value().attr("href") else { continue };
+        let Some(href) = el.value().attr("href") else {
+            continue;
+        };
         let url = normalize(href);
-        let Ok(parsed) = Url::parse(&url) else { continue };
+        let Ok(parsed) = Url::parse(&url) else {
+            continue;
+        };
         let host = parsed.host_str().unwrap_or("");
         if host != "web3.career" && host != "www.web3.career" {
             continue;
@@ -167,13 +175,17 @@ async fn fetch_apply_url(client: &Client, detail_url: &str) -> Result<Option<Str
     let a = Selector::parse("a[href]").expect("static selector");
 
     let is_external = |href: &str| -> bool {
-        let Ok(u) = Url::parse(href) else { return false };
+        let Ok(u) = Url::parse(href) else {
+            return false;
+        };
         let Some(h) = u.host_str() else { return false };
         !h.ends_with("web3.career")
     };
 
     for el in doc.select(&a) {
-        let Some(href) = el.value().attr("href") else { continue };
+        let Some(href) = el.value().attr("href") else {
+            continue;
+        };
         if href.contains("source=web3.career") && is_external(href) {
             return Ok(Some(href.to_string()));
         }
@@ -190,7 +202,9 @@ async fn fetch_apply_url(client: &Client, detail_url: &str) -> Result<Option<Str
         if text != "apply" && text != "apply now" {
             continue;
         }
-        let Some(href) = el.value().attr("href") else { continue };
+        let Some(href) = el.value().attr("href") else {
+            continue;
+        };
         if is_external(href) {
             return Ok(Some(href.to_string()));
         }

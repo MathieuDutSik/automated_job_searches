@@ -55,13 +55,10 @@ impl AtsAdapter for Workday {
 
     async fn fetch_jobs(&self, slug: &str) -> Result<Vec<AdapterJob>> {
         let Some((tenant, region, site)) = split_slug(slug) else {
-            anyhow::bail!(
-                "workday slug must be `tenant/wd{{N}}/site` (got `{slug}`)"
-            );
+            anyhow::bail!("workday slug must be `tenant/wd{{N}}/site` (got `{slug}`)");
         };
-        let api_url = format!(
-            "https://{tenant}.{region}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs"
-        );
+        let api_url =
+            format!("https://{tenant}.{region}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs");
         let public_root = format!("https://{tenant}.{region}.myworkdayjobs.com/en-US/{site}");
         let client = http::client()?;
 
@@ -95,7 +92,13 @@ impl AtsAdapter for Workday {
             if offset == 0 && page.total > 0 {
                 known_total = page.total;
             }
-            debug!(slug, offset, got = page.job_postings.len(), total = known_total, "page");
+            debug!(
+                slug,
+                offset,
+                got = page.job_postings.len(),
+                total = known_total,
+                "page"
+            );
             if page.job_postings.is_empty() {
                 break;
             }

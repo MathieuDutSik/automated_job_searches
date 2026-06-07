@@ -147,7 +147,11 @@ fn parse_rss_items(xml: &str) -> Vec<RssItem> {
         };
         let decoded = decode_basic_entities(&raw_title);
         let (title, company_name) = split_title_at_company(&decoded);
-        out.push(RssItem { title, company_name, link });
+        out.push(RssItem {
+            title,
+            company_name,
+            link,
+        });
     }
     out
 }
@@ -185,7 +189,9 @@ async fn fetch_apply_url(client: &Client, detail_url: &str) -> Result<Option<Str
     let a = Selector::parse("a[href]").expect("static selector");
 
     let is_external = |href: &str| -> bool {
-        let Ok(u) = Url::parse(href) else { return false };
+        let Ok(u) = Url::parse(href) else {
+            return false;
+        };
         let Some(h) = u.host_str() else { return false };
         !h.ends_with("cryptocurrencyjobs.co")
     };
@@ -193,22 +199,37 @@ async fn fetch_apply_url(client: &Client, detail_url: &str) -> Result<Option<Str
     let is_social_or_util = |host: &str| -> bool {
         matches!(
             host,
-            "facebook.com" | "www.facebook.com" | "x.com" | "twitter.com" | "www.twitter.com" |
-            "linkedin.com" | "www.linkedin.com" | "youtube.com" | "www.youtube.com" |
-            "instagram.com" | "www.instagram.com" | "tiktok.com" | "www.tiktok.com" |
-            "github.com" | "google.com"
+            "facebook.com"
+                | "www.facebook.com"
+                | "x.com"
+                | "twitter.com"
+                | "www.twitter.com"
+                | "linkedin.com"
+                | "www.linkedin.com"
+                | "youtube.com"
+                | "www.youtube.com"
+                | "instagram.com"
+                | "www.instagram.com"
+                | "tiktok.com"
+                | "www.tiktok.com"
+                | "github.com"
+                | "google.com"
         )
     };
 
     for el in doc.select(&a) {
-        let Some(href) = el.value().attr("href") else { continue };
+        let Some(href) = el.value().attr("href") else {
+            continue;
+        };
         if href.contains(APPLY_REF_MARKER) && is_external(href) {
             return Ok(Some(href.to_string()));
         }
     }
 
     for el in doc.select(&a) {
-        let Some(href) = el.value().attr("href") else { continue };
+        let Some(href) = el.value().attr("href") else {
+            continue;
+        };
         if !is_external(href) {
             continue;
         }
@@ -238,7 +259,10 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Senior Customer Success Manager - Fintech");
         assert_eq!(items[0].company_name.as_deref(), Some("BitGo"));
-        assert_eq!(items[0].link, "https://cryptocurrencyjobs.co/finance/bitgo-x/");
+        assert_eq!(
+            items[0].link,
+            "https://cryptocurrencyjobs.co/finance/bitgo-x/"
+        );
     }
 
     #[test]

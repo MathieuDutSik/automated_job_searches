@@ -20,8 +20,7 @@ impl Brave {
     }
 
     pub fn from_env() -> Result<Self> {
-        let key = std::env::var("BRAVE_API_KEY")
-            .context("BRAVE_API_KEY env var not set")?;
+        let key = std::env::var("BRAVE_API_KEY").context("BRAVE_API_KEY env var not set")?;
         if key.trim().is_empty() {
             anyhow::bail!("BRAVE_API_KEY is empty");
         }

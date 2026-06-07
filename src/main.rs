@@ -115,7 +115,10 @@ enum ListWhat {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,reqwest=warn")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,reqwest=warn")),
+        )
         .with_target(false)
         .init();
 
@@ -129,7 +132,10 @@ async fn main() -> Result<()> {
             } else {
                 let known: Vec<&'static str> = crawlers::all().iter().map(|c| c.name()).collect();
                 let c = crawlers::by_name(&name).ok_or_else(|| {
-                    anyhow::anyhow!("unknown crawler '{name}'. known: {} (or 'all')", known.join(", "))
+                    anyhow::anyhow!(
+                        "unknown crawler '{name}'. known: {} (or 'all')",
+                        known.join(", ")
+                    )
                 })?;
                 vec![c]
             };
@@ -138,7 +144,14 @@ async fn main() -> Result<()> {
                 let run_id = db.start_run(crawler.name())?;
                 match crawler.run(&db).await {
                     Ok(rep) => {
-                        db.finish_run(run_id, true, rep.http_status, rep.jobs_matched, rep.jobs_new, None)?;
+                        db.finish_run(
+                            run_id,
+                            true,
+                            rep.http_status,
+                            rep.jobs_matched,
+                            rep.jobs_new,
+                            None,
+                        )?;
                         info!(
                             source = rep.source,
                             pages = rep.pages_visited,
@@ -204,7 +217,14 @@ async fn main() -> Result<()> {
                     println!("{kind:<16} {slug:<32} {name}");
                 }
             }
-            ListWhat::Jobs { limit, start, remote, r#match, all, applied } => {
+            ListWhat::Jobs {
+                limit,
+                start,
+                remote,
+                r#match,
+                all,
+                applied,
+            } => {
                 let status_filter = if applied {
                     StatusFilter::AppliedOnly
                 } else if all {
@@ -212,27 +232,39 @@ async fn main() -> Result<()> {
                 } else {
                     StatusFilter::HideDismissed
                 };
-                let rows = db.list_jobs_filtered(limit, start, remote, r#match.as_deref(), status_filter)?;
-                for (id, company, title, location, url, remote_flag, status) in rows {
-                    let remote_tag = if remote_flag == Some(true) { " [remote]" } else { "" };
-                    let status_tag = match status.as_str() {
+                let rows =
+                    db.list_jobs_filtered(limit, start, remote, r#match.as_deref(), status_filter)?;
+                for row in rows {
+                    let remote_tag = if row.remote == Some(true) {
+                        " [remote]"
+                    } else {
+                        ""
+                    };
+                    let status_tag = match row.status.as_str() {
                         "applied" => " [applied]",
                         "dismissed" => " [dismissed]",
                         _ => "",
                     };
-                    println!("{id:>6}  {company} | {title}{remote_tag}{status_tag} | {location} | {url}");
+                    println!(
+                        "{id:>6}  {company} | {title}{remote_tag}{status_tag} | {location} | {url}",
+                        id = row.id,
+                        company = row.company,
+                        title = row.title,
+                        location = row.location,
+                        url = row.apply_url,
+                    );
                 }
             }
             ListWhat::ByCompany { limit } => {
-                for (name, kind, slug, jobs) in db.list_by_company(limit)? {
-                    println!("{name} ({kind}:{slug})");
-                    for (title, location, url) in jobs {
-                        if location.is_empty() {
-                            println!("  - {title}");
+                for cwj in db.list_by_company(limit)? {
+                    println!("{} ({}:{})", cwj.name, cwj.kind, cwj.slug);
+                    for job in cwj.jobs {
+                        if job.location.is_empty() {
+                            println!("  - {}", job.title);
                         } else {
-                            println!("  - {title} | {location}");
+                            println!("  - {} | {}", job.title, job.location);
                         }
-                        println!("    {url}");
+                        println!("    {}", job.apply_url);
                     }
                     println!();
                 }
@@ -265,14 +297,7 @@ async fn main() -> Result<()> {
                 let run_id = db.start_run(&label)?;
                 match discover::run_plan(&db, engine.as_ref(), plan).await {
                     Ok(rep) => {
-                        db.finish_run(
-                            run_id,
-                            true,
-                            None,
-                            rep.urls_seen,
-                            rep.companies_new,
-                            None,
-                        )?;
+                        db.finish_run(run_id, true, None, rep.urls_seen, rep.companies_new, None)?;
                         info!(
                             kind = rep.kind,
                             queries = rep.queries_sent,

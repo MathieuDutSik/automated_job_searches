@@ -67,7 +67,11 @@ pub async fn sync_all_for_kind(db: &Db, adapter: &dyn AtsAdapter) -> Result<Sync
         ..Default::default()
     };
     let slugs = db.list_slugs_for_kind(adapter.kind())?;
-    info!(kind = adapter.kind().as_str(), count = slugs.len(), "starting sync");
+    info!(
+        kind = adapter.kind().as_str(),
+        count = slugs.len(),
+        "starting sync"
+    );
     for (idx, (company_id, name, slug)) in slugs.into_iter().enumerate() {
         if idx > 0 {
             tokio::time::sleep(POLITENESS_DELAY).await;
@@ -138,7 +142,11 @@ pub(crate) async fn fetch_value_or_none_on_404(
     client: &reqwest::Client,
     url: &str,
 ) -> Result<Option<serde_json::Value>> {
-    let resp = client.get(url).send().await.with_context(|| format!("GET {url}"))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("GET {url}"))?;
     if resp.status().as_u16() == 404 {
         return Ok(None);
     }

@@ -72,8 +72,8 @@ impl AtsAdapter for BambooHr {
             // locationType "2" or location values containing "remote" reinforce
             // the structured isRemote flag when BambooHR leaves it null.
             let remote = j.is_remote.or_else(|| {
-                let loc_remote = format_location(&j.location)
-                    .map(|s| s.to_ascii_lowercase().contains("remote"));
+                let loc_remote =
+                    format_location(&j.location).map(|s| s.to_ascii_lowercase().contains("remote"));
                 let type_remote = j.location_type.as_deref().map(|t| t == "2");
                 loc_remote.or(type_remote)
             });

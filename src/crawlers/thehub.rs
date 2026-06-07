@@ -28,10 +28,18 @@ impl Crawler for TheHub {
     async fn run(&self, db: &Db) -> Result<CrawlReport> {
         let client = http::client()?;
         info!(url = LIST_URL, "fetching listing");
-        let resp = client.get(LIST_URL).send().await.context("GET thehub listing")?;
+        let resp = client
+            .get(LIST_URL)
+            .send()
+            .await
+            .context("GET thehub listing")?;
         let status = resp.status();
         let body = resp.text().await.context("read body")?;
-        info!(status = status.as_u16(), bytes = body.len(), "listing fetched");
+        info!(
+            status = status.as_u16(),
+            bytes = body.len(),
+            "listing fetched"
+        );
 
         let mut report = CrawlReport {
             source: SOURCE,
@@ -43,7 +51,10 @@ impl Crawler for TheHub {
         }
 
         let detail_paths = parse_listing(&body);
-        info!(count = detail_paths.len(), "detail URLs extracted (page 1 only; rest of pagination is JS-driven)");
+        info!(
+            count = detail_paths.len(),
+            "detail URLs extracted (page 1 only; rest of pagination is JS-driven)"
+        );
 
         for (idx, path) in detail_paths.iter().enumerate() {
             if idx > 0 {
@@ -70,19 +81,14 @@ impl Crawler for TheHub {
             };
             report.jobs_matched += 1;
 
-            let (company_id, company_is_new) = match db.upsert_company(
-                None,
-                ats.kind,
-                &ats.slug,
-                SOURCE,
-                Some(&detail_url),
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(error = %e, slug = %ats.slug, "company upsert failed");
-                    continue;
-                }
-            };
+            let (company_id, company_is_new) =
+                match db.upsert_company(None, ats.kind, &ats.slug, SOURCE, Some(&detail_url)) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(error = %e, slug = %ats.slug, "company upsert failed");
+                        continue;
+                    }
+                };
             if company_is_new {
                 report.companies_new += 1;
             }
@@ -121,7 +127,9 @@ fn parse_listing(html: &str) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for el in doc.select(&a) {
-        let Some(href) = el.value().attr("href") else { continue };
+        let Some(href) = el.value().attr("href") else {
+            continue;
+        };
         // Match `/jobs/{24-hex}` exactly — skip filter/category pages.
         let tail = href.trim_start_matches("/jobs/");
         if tail.len() < 12 || !tail.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -150,14 +158,20 @@ async fn fetch_detail(client: &Client, detail_url: &str) -> Result<Option<(Strin
         .select(&h1_sel)
         .next()
         .map(|e| e.text().collect::<String>())
-        .or_else(|| doc.select(&title_sel).next().map(|e| e.text().collect::<String>()))
+        .or_else(|| {
+            doc.select(&title_sel)
+                .next()
+                .map(|e| e.text().collect::<String>())
+        })
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| detail_url.to_string());
 
     let a_sel = Selector::parse("a[href]").expect("static selector");
     for el in doc.select(&a_sel) {
-        let Some(href) = el.value().attr("href") else { continue };
+        let Some(href) = el.value().attr("href") else {
+            continue;
+        };
         let Ok(u) = Url::parse(href) else { continue };
         let Some(host) = u.host_str() else { continue };
         if host.ends_with(HOST) {
@@ -174,11 +188,26 @@ async fn fetch_detail(client: &Client, detail_url: &str) -> Result<Option<(Strin
 fn is_social_or_util(host: &str) -> bool {
     matches!(
         host,
-        "facebook.com" | "www.facebook.com" | "x.com" | "twitter.com" | "www.twitter.com" |
-        "linkedin.com" | "www.linkedin.com" | "youtube.com" | "www.youtube.com" |
-        "instagram.com" | "www.instagram.com" | "tiktok.com" | "www.tiktok.com" |
-        "github.com" | "google.com" | "medium.com" | "discord.com" | "discord.gg" |
-        "slack.com" | "t.me"
+        "facebook.com"
+            | "www.facebook.com"
+            | "x.com"
+            | "twitter.com"
+            | "www.twitter.com"
+            | "linkedin.com"
+            | "www.linkedin.com"
+            | "youtube.com"
+            | "www.youtube.com"
+            | "instagram.com"
+            | "www.instagram.com"
+            | "tiktok.com"
+            | "www.tiktok.com"
+            | "github.com"
+            | "google.com"
+            | "medium.com"
+            | "discord.com"
+            | "discord.gg"
+            | "slack.com"
+            | "t.me"
     )
 }
 

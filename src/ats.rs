@@ -65,39 +65,71 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
     // boards.greenhouse.io/{slug}[/jobs/{id}]
     if host == "boards.greenhouse.io" || host == "job-boards.greenhouse.io" {
         let slug = segs.first()?.to_string();
-        let external_id = segs.iter().position(|s| *s == "jobs").and_then(|i| segs.get(i + 1)).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Greenhouse, slug, external_id });
+        let external_id = segs
+            .iter()
+            .position(|s| *s == "jobs")
+            .and_then(|i| segs.get(i + 1))
+            .map(|s| s.to_string());
+        return Some(AtsRef {
+            kind: AtsKind::Greenhouse,
+            slug,
+            external_id,
+        });
     }
 
     // jobs.ashbyhq.com/{slug}[/{job_uuid}]
     if host == "jobs.ashbyhq.com" {
         let slug = segs.first()?.to_string();
         let external_id = segs.get(1).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Ashbyhq, slug, external_id });
+        return Some(AtsRef {
+            kind: AtsKind::Ashbyhq,
+            slug,
+            external_id,
+        });
     }
 
     // jobs.lever.co/{slug}[/{job_uuid}]
     if host == "jobs.lever.co" {
         let slug = segs.first()?.to_string();
         let external_id = segs.get(1).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Lever, slug, external_id });
+        return Some(AtsRef {
+            kind: AtsKind::Lever,
+            slug,
+            external_id,
+        });
     }
 
     // apply.workable.com/{slug}[/j/{id}] OR {slug}.workable.com
     if host == "apply.workable.com" || host == "jobs.workable.com" {
         let slug = segs.first()?.to_string();
-        let external_id = segs.iter().position(|s| *s == "j").and_then(|i| segs.get(i + 1)).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Workable, slug, external_id });
+        let external_id = segs
+            .iter()
+            .position(|s| *s == "j")
+            .and_then(|i| segs.get(i + 1))
+            .map(|s| s.to_string());
+        return Some(AtsRef {
+            kind: AtsKind::Workable,
+            slug,
+            external_id,
+        });
     }
     if let Some(slug) = host.strip_suffix(".workable.com") {
-        return Some(AtsRef { kind: AtsKind::Workable, slug: slug.to_string(), external_id: None });
+        return Some(AtsRef {
+            kind: AtsKind::Workable,
+            slug: slug.to_string(),
+            external_id: None,
+        });
     }
 
     // jobs.smartrecruiters.com/{slug}[/{id}]
     if host == "jobs.smartrecruiters.com" || host == "careers.smartrecruiters.com" {
         let slug = segs.first()?.to_string();
         let external_id = segs.get(1).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Smartrecruiters, slug, external_id });
+        return Some(AtsRef {
+            kind: AtsKind::Smartrecruiters,
+            slug,
+            external_id,
+        });
     }
 
     // {slug}.bamboohr.com/[careers|jobs]/{id}
@@ -112,8 +144,16 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
         if !segs.iter().any(|s| matches!(*s, "careers" | "jobs")) {
             return None;
         }
-        let external_id = segs.iter().rev().find(|s| s.chars().all(|c| c.is_ascii_digit())).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Bamboohr, slug: slug.to_string(), external_id });
+        let external_id = segs
+            .iter()
+            .rev()
+            .find(|s| s.chars().all(|c| c.is_ascii_digit()))
+            .map(|s| s.to_string());
+        return Some(AtsRef {
+            kind: AtsKind::Bamboohr,
+            slug: slug.to_string(),
+            external_id,
+        });
     }
 
     // {slug}.recruitee.com/o/{id-slug}
@@ -127,37 +167,84 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
         if !segs.iter().any(|s| matches!(*s, "o" | "careers")) {
             return None;
         }
-        let external_id = segs.iter().position(|s| *s == "o").and_then(|i| segs.get(i + 1)).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Recruitee, slug: slug.to_string(), external_id });
+        let external_id = segs
+            .iter()
+            .position(|s| *s == "o")
+            .and_then(|i| segs.get(i + 1))
+            .map(|s| s.to_string());
+        return Some(AtsRef {
+            kind: AtsKind::Recruitee,
+            slug: slug.to_string(),
+            external_id,
+        });
     }
 
     // {slug}.jobs.personio.com or {slug}.jobs.personio.de
-    if let Some(rest) = host.strip_suffix(".jobs.personio.com").or_else(|| host.strip_suffix(".jobs.personio.de")) {
-        return Some(AtsRef { kind: AtsKind::Personio, slug: rest.to_string(), external_id: segs.first().map(|s| s.to_string()) });
+    if let Some(rest) = host
+        .strip_suffix(".jobs.personio.com")
+        .or_else(|| host.strip_suffix(".jobs.personio.de"))
+    {
+        return Some(AtsRef {
+            kind: AtsKind::Personio,
+            slug: rest.to_string(),
+            external_id: segs.first().map(|s| s.to_string()),
+        });
     }
 
     // {slug}.breezy.hr/p/{id}
     if let Some(slug) = host.strip_suffix(".breezy.hr") {
-        let external_id = segs.iter().position(|s| *s == "p").and_then(|i| segs.get(i + 1)).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Breezy, slug: slug.to_string(), external_id });
+        let external_id = segs
+            .iter()
+            .position(|s| *s == "p")
+            .and_then(|i| segs.get(i + 1))
+            .map(|s| s.to_string());
+        return Some(AtsRef {
+            kind: AtsKind::Breezy,
+            slug: slug.to_string(),
+            external_id,
+        });
     }
 
     // {slug}.teamtailor.com/jobs/{id}
     if let Some(slug) = host.strip_suffix(".teamtailor.com") {
-        let external_id = segs.iter().position(|s| *s == "jobs").and_then(|i| segs.get(i + 1)).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Teamtailor, slug: slug.to_string(), external_id });
+        let external_id = segs
+            .iter()
+            .position(|s| *s == "jobs")
+            .and_then(|i| segs.get(i + 1))
+            .map(|s| s.to_string());
+        return Some(AtsRef {
+            kind: AtsKind::Teamtailor,
+            slug: slug.to_string(),
+            external_id,
+        });
     }
 
     // {slug}.pinpointhq.com/[en/]postings/{id}
     if let Some(slug) = host.strip_suffix(".pinpointhq.com") {
-        let external_id = segs.iter().position(|s| *s == "postings").and_then(|i| segs.get(i + 1)).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Pinpoint, slug: slug.to_string(), external_id });
+        let external_id = segs
+            .iter()
+            .position(|s| *s == "postings")
+            .and_then(|i| segs.get(i + 1))
+            .map(|s| s.to_string());
+        return Some(AtsRef {
+            kind: AtsKind::Pinpoint,
+            slug: slug.to_string(),
+            external_id,
+        });
     }
 
     // {slug}.applytojob.com/apply/{id}
     if let Some(slug) = host.strip_suffix(".applytojob.com") {
-        let external_id = segs.iter().position(|s| *s == "apply").and_then(|i| segs.get(i + 1)).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Jazzhr, slug: slug.to_string(), external_id });
+        let external_id = segs
+            .iter()
+            .position(|s| *s == "apply")
+            .and_then(|i| segs.get(i + 1))
+            .map(|s| s.to_string());
+        return Some(AtsRef {
+            kind: AtsKind::Jazzhr,
+            slug: slug.to_string(),
+            external_id,
+        });
     }
 
     // {tenant}.wd{N}.myworkdayjobs.com/[lang/]{site}/job/{loc}/{title}_{id}
@@ -174,11 +261,18 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
             let tenant = host_parts[0];
             let region = host_parts[1];
             if region.starts_with("wd") && !tenant.is_empty() {
-                let site = segs.iter().find(|s| !is_lang_code(s)).map(|s| s.to_string());
+                let site = segs
+                    .iter()
+                    .find(|s| !is_lang_code(s))
+                    .map(|s| s.to_string());
                 if let Some(site) = site {
                     let composite = format!("{tenant}/{region}/{site}");
                     let external_id = segs.last().map(|s| s.to_string());
-                    return Some(AtsRef { kind: AtsKind::Workday, slug: composite, external_id });
+                    return Some(AtsRef {
+                        kind: AtsKind::Workday,
+                        slug: composite,
+                        external_id,
+                    });
                 }
             }
         }
@@ -189,7 +283,11 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
         let i = segs.iter().position(|s| *s == "jobs")?;
         let slug = segs.get(i + 1)?.to_string();
         let external_id = segs.get(i + 3).map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Comeet, slug, external_id });
+        return Some(AtsRef {
+            kind: AtsKind::Comeet,
+            slug,
+            external_id,
+        });
     }
 
     None
@@ -202,9 +300,21 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
 fn is_non_tenant_subdomain(slug: &str) -> bool {
     matches!(
         slug,
-        "www" | "developers" | "developer" | "api" | "docs" | "doc" |
-        "support" | "help" | "blog" | "store" | "shop" | "status" |
-        "marketing" | "about" | "info"
+        "www"
+            | "developers"
+            | "developer"
+            | "api"
+            | "docs"
+            | "doc"
+            | "support"
+            | "help"
+            | "blog"
+            | "store"
+            | "shop"
+            | "status"
+            | "marketing"
+            | "about"
+            | "info"
     )
 }
 
@@ -256,7 +366,11 @@ pub fn classify_or_other(url: &str) -> Option<AtsRef> {
             Some(p.to_string())
         }
     };
-    Some(AtsRef { kind: AtsKind::Other, slug: host, external_id })
+    Some(AtsRef {
+        kind: AtsKind::Other,
+        slug: host,
+        external_id,
+    })
 }
 
 #[cfg(test)]
@@ -306,10 +420,14 @@ mod tests {
 
     #[test]
     fn other_catches_unknown() {
-        let r = classify_or_other("https://jobs.solana.com/companies/ondo-finance/jobs/81464556-x").unwrap();
+        let r = classify_or_other("https://jobs.solana.com/companies/ondo-finance/jobs/81464556-x")
+            .unwrap();
         assert_eq!(r.kind, AtsKind::Other);
         assert_eq!(r.slug, "jobs.solana.com");
-        assert_eq!(r.external_id.as_deref(), Some("companies/ondo-finance/jobs/81464556-x"));
+        assert_eq!(
+            r.external_id.as_deref(),
+            Some("companies/ondo-finance/jobs/81464556-x")
+        );
     }
 
     #[test]
@@ -320,7 +438,9 @@ mod tests {
     #[test]
     fn bamboohr_rejects_marketing_subdomain() {
         // www.bamboohr.com is the marketing site, not a tenant.
-        assert!(classify_apply_url("https://www.bamboohr.com/careers/engineering-it-team").is_none());
+        assert!(
+            classify_apply_url("https://www.bamboohr.com/careers/engineering-it-team").is_none()
+        );
         // developers.bamboohr.com is dev docs.
         assert!(classify_apply_url("https://developers.bamboohr.com/jobs/anything").is_none());
     }
@@ -338,7 +458,8 @@ mod tests {
     #[test]
     fn recruitee_rejects_marketing_and_requires_offer_path() {
         assert!(classify_apply_url("https://www.recruitee.com/features").is_none());
-        let r = classify_apply_url("https://exeon.recruitee.com/o/senior-backend-developer").unwrap();
+        let r =
+            classify_apply_url("https://exeon.recruitee.com/o/senior-backend-developer").unwrap();
         assert_eq!(r.kind, AtsKind::Recruitee);
         assert_eq!(r.slug, "exeon");
     }

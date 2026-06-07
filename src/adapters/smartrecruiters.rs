@@ -61,7 +61,11 @@ impl AtsAdapter for SmartRecruiters {
             let url = format!(
                 "https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit={PAGE_LIMIT}&offset={offset}"
             );
-            let resp = client.get(&url).send().await.with_context(|| format!("GET {url}"))?;
+            let resp = client
+                .get(&url)
+                .send()
+                .await
+                .with_context(|| format!("GET {url}"))?;
             if resp.status().as_u16() == 404 {
                 if offset == 0 {
                     anyhow::bail!("404");
@@ -70,7 +74,13 @@ impl AtsAdapter for SmartRecruiters {
             }
             let resp = resp.error_for_status()?;
             let page: SrPage = resp.json().await.context("parse smartrecruiters page")?;
-            debug!(slug, offset, got = page.content.len(), total = page.total_found, "page");
+            debug!(
+                slug,
+                offset,
+                got = page.content.len(),
+                total = page.total_found,
+                "page"
+            );
             if page.content.is_empty() {
                 break;
             }

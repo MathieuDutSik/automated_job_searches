@@ -49,10 +49,7 @@ impl SearchEngine for You {
             .get(ENDPOINT)
             .header("X-API-Key", &self.api_key)
             .header("Accept", "application/json")
-            .query(&[
-                ("query", query),
-                ("num_web_results", &count.to_string()),
-            ])
+            .query(&[("query", query), ("num_web_results", &count.to_string())])
             .send()
             .await
             .with_context(|| format!("You.com GET {ENDPOINT}"))?;

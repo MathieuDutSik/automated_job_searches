@@ -100,6 +100,36 @@ pub struct Db {
     conn: Connection,
 }
 
+/// One row returned by `list_jobs_filtered` for display in `ajs list jobs`.
+/// Mirrors the SELECT list of that query.
+#[derive(Debug, Clone)]
+pub struct JobListing {
+    pub id: i64,
+    pub company: String,
+    pub title: String,
+    pub location: String,
+    pub apply_url: String,
+    pub remote: Option<bool>,
+    pub status: String,
+}
+
+/// Compact job tuple shown under a company in `ajs list by-company`.
+#[derive(Debug, Clone)]
+pub struct JobSummary {
+    pub title: String,
+    pub location: String,
+    pub apply_url: String,
+}
+
+/// One row returned by `list_by_company` — a company plus its open jobs.
+#[derive(Debug, Clone)]
+pub struct CompanyWithJobs {
+    pub name: String,
+    pub kind: String,
+    pub slug: String,
+    pub jobs: Vec<JobSummary>,
+}
+
 pub struct JobUpsert<'a> {
     pub company_id: i64,
     pub kind: AtsKind,
@@ -138,7 +168,9 @@ impl Db {
         // still index as single tokens).
         const FTS_VERSION: &str = "2";
         let built: Option<String> = conn
-            .query_row("SELECT value FROM meta WHERE key = 'fts_built'", [], |r| r.get(0))
+            .query_row("SELECT value FROM meta WHERE key = 'fts_built'", [], |r| {
+                r.get(0)
+            })
             .optional()?;
         let fts_stale = built.as_deref() != Some(FTS_VERSION);
         if fts_stale {
@@ -266,30 +298,37 @@ impl Db {
         )?;
         let rows = stmt
             .query_map(params![kind.as_str()], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
-    pub fn list_by_company(
-        &self,
-        limit_companies: usize,
-    ) -> Result<Vec<(String, String, String, Vec<(String, String, String)>)>> {
+    pub fn list_by_company(&self, limit_companies: usize) -> Result<Vec<CompanyWithJobs>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, ats_kind, ats_slug FROM companies
              WHERE id IN (SELECT DISTINCT company_id FROM jobs WHERE closed_at IS NULL)
              ORDER BY name COLLATE NOCASE
              LIMIT ?",
         )?;
-        let companies: Vec<(i64, String, String, String)> = stmt
+        struct CompanyRef {
+            id: i64,
+            name: String,
+            kind: String,
+            slug: String,
+        }
+        let companies: Vec<CompanyRef> = stmt
             .query_map(params![limit_companies as i64], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                ))
+                Ok(CompanyRef {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    kind: r.get(2)?,
+                    slug: r.get(3)?,
+                })
             })?
             .collect::<Result<Vec<_>, _>>()?;
         let mut out = Vec::with_capacity(companies.len());
@@ -298,13 +337,22 @@ impl Db {
                FROM jobs WHERE company_id = ? AND closed_at IS NULL
                ORDER BY title COLLATE NOCASE",
         )?;
-        for (id, name, kind, slug) in companies {
-            let jobs = jobs_stmt
-                .query_map(params![id], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        for c in companies {
+            let jobs: Vec<JobSummary> = jobs_stmt
+                .query_map(params![c.id], |r| {
+                    Ok(JobSummary {
+                        title: r.get(0)?,
+                        location: r.get(1)?,
+                        apply_url: r.get(2)?,
+                    })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
-            out.push((name, kind, slug, jobs));
+            out.push(CompanyWithJobs {
+                name: c.name,
+                kind: c.kind,
+                slug: c.slug,
+                jobs,
+            });
         }
         Ok(out)
     }
@@ -341,7 +389,11 @@ impl Db {
         )?;
         let rows = stmt
             .query_map(params![limit as i64], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
@@ -350,7 +402,6 @@ impl Db {
     /// List open jobs, optionally filtered by remote / FTS5 match / status.
     /// `limit = None` means unlimited (passed to SQLite as `LIMIT -1`).
     /// `start` is an OFFSET applied before the limit.
-    /// Returns (id, company, title, location, apply_url, remote, status).
     pub fn list_jobs_filtered(
         &self,
         limit: Option<usize>,
@@ -358,7 +409,7 @@ impl Db {
         remote_only: bool,
         match_query: Option<&str>,
         status: StatusFilter,
-    ) -> Result<Vec<(i64, String, String, String, String, Option<bool>, String)>> {
+    ) -> Result<Vec<JobListing>> {
         let mut sql = String::from(
             "SELECT j.id, c.name, j.title, COALESCE(j.location, ''), j.apply_url, j.remote, j.status
                FROM jobs j JOIN companies c ON c.id = j.company_id",
@@ -386,16 +437,16 @@ impl Db {
         let limit_param: i64 = limit.map(|n| n as i64).unwrap_or(-1);
         let offset_param: i64 = start as i64;
         let mut stmt = self.conn.prepare(&sql)?;
-        let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(i64, String, String, String, String, Option<bool>, String)> {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, String>(4)?,
-                r.get::<_, Option<i64>>(5)?.map(|i| i != 0),
-                r.get::<_, String>(6)?,
-            ))
+        let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<JobListing> {
+            Ok(JobListing {
+                id: r.get(0)?,
+                company: r.get(1)?,
+                title: r.get(2)?,
+                location: r.get(3)?,
+                apply_url: r.get(4)?,
+                remote: r.get::<_, Option<i64>>(5)?.map(|i| i != 0),
+                status: r.get(6)?,
+            })
         };
         let rows: Vec<_> = if let Some(q) = match_query {
             stmt.query_map(params![q, limit_param, offset_param], map_row)?
