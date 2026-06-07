@@ -55,6 +55,13 @@ enum ListWhat {
     Jobs {
         #[arg(long, default_value_t = 50)]
         limit: usize,
+        /// Only show jobs the ATS flagged as remote.
+        #[arg(long)]
+        remote: bool,
+        /// FTS5 query over title/location/department/description.
+        /// Trigram tokenizer — quote terms with punctuation, e.g. `"c++"`.
+        #[arg(long, value_name = "QUERY")]
+        r#match: Option<String>,
     },
     /// Print every company that has open jobs, with its jobs indented underneath.
     ByCompany {
@@ -155,9 +162,14 @@ async fn main() -> Result<()> {
                     println!("{kind:<16} {slug:<32} {name}");
                 }
             }
-            ListWhat::Jobs { limit } => {
-                for (company, title, location, url) in db.list_jobs(limit)? {
-                    println!("{company} | {title} | {location} | {url}");
+            ListWhat::Jobs { limit, remote, r#match } => {
+                let rows = db.list_jobs_filtered(limit, remote, r#match.as_deref())?;
+                for (company, title, location, url, remote_flag) in rows {
+                    let tag = match remote_flag {
+                        Some(true) => " [remote]",
+                        _ => "",
+                    };
+                    println!("{company} | {title}{tag} | {location} | {url}");
                 }
             }
             ListWhat::ByCompany { limit } => {

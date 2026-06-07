@@ -18,6 +18,8 @@ pub struct AdapterJob {
     pub location: Option<String>,
     pub department: Option<String>,
     pub apply_url: String,
+    pub description: Option<String>,
+    pub remote: Option<bool>,
     pub posted_at: Option<String>,
     pub raw_json: String,
 }
@@ -71,6 +73,7 @@ pub async fn sync_all_for_kind(db: &Db, adapter: &dyn AtsAdapter) -> Result<Sync
                     let trimmed_title = j.title.trim();
                     let trimmed_loc = j.location.as_deref().map(str::trim);
                     let trimmed_dept = j.department.as_deref().map(str::trim);
+                    let trimmed_desc = j.description.as_deref().map(str::trim);
                     let res = db.upsert_job(JobUpsert {
                         company_id,
                         kind: adapter.kind(),
@@ -79,6 +82,8 @@ pub async fn sync_all_for_kind(db: &Db, adapter: &dyn AtsAdapter) -> Result<Sync
                         location: trimmed_loc.filter(|s| !s.is_empty()),
                         department: trimmed_dept.filter(|s| !s.is_empty()),
                         apply_url: &j.apply_url,
+                        description: trimmed_desc.filter(|s| !s.is_empty()),
+                        remote: j.remote,
                         posted_at: j.posted_at.as_deref(),
                         raw_json: &j.raw_json,
                     });
@@ -119,15 +124,34 @@ pub async fn sync_all_for_kind(db: &Db, adapter: &dyn AtsAdapter) -> Result<Sync
     Ok(report)
 }
 
-pub(crate) async fn fetch_or_none_on_404<T: serde::de::DeserializeOwned>(
+/// Fetch a URL as a generic JSON `Value`. Adapters use this so they can
+/// preserve the original per-job JSON in `raw_json` alongside a typed view.
+pub(crate) async fn fetch_value_or_none_on_404(
     client: &reqwest::Client,
     url: &str,
-) -> Result<Option<T>> {
+) -> Result<Option<serde_json::Value>> {
     let resp = client.get(url).send().await.with_context(|| format!("GET {url}"))?;
     if resp.status().as_u16() == 404 {
         return Ok(None);
     }
     let resp = resp.error_for_status()?;
-    let body: T = resp.json().await.context("parse JSON")?;
+    let body: serde_json::Value = resp.json().await.context("parse JSON")?;
     Ok(Some(body))
+}
+
+/// Best-effort HTML → plain text. Decodes a handful of common entities, then
+/// uses scraper to drop tags, then collapses whitespace. Intended for ATS
+/// description blobs (Greenhouse encodes its HTML with entities).
+pub(crate) fn html_to_text(html: &str) -> String {
+    let decoded = html
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ");
+    let frag = scraper::Html::parse_fragment(&decoded);
+    let text = frag.root_element().text().collect::<Vec<_>>().join(" ");
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

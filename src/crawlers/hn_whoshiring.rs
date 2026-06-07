@@ -116,6 +116,8 @@ impl Crawler for HnWhosHiring {
                 location: None,
                 department: None,
                 apply_url: &apply_url,
+                description: None,
+                remote: None,
                 posted_at: None,
                 raw_json: "{}",
             }) {

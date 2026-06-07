@@ -46,6 +46,33 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_open    ON jobs(closed_at) WHERE closed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_remote  ON jobs(remote) WHERE remote = 1 AND closed_at IS NULL;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(
+    title, location, department, description,
+    content='jobs', content_rowid='id',
+    tokenize='trigram'
+);
+
+CREATE TRIGGER IF NOT EXISTS jobs_ai AFTER INSERT ON jobs BEGIN
+  INSERT INTO jobs_fts(rowid, title, location, department, description)
+  VALUES (new.id, new.title, new.location, new.department, new.description);
+END;
+CREATE TRIGGER IF NOT EXISTS jobs_ad AFTER DELETE ON jobs BEGIN
+  INSERT INTO jobs_fts(jobs_fts, rowid, title, location, department, description)
+  VALUES ('delete', old.id, old.title, old.location, old.department, old.description);
+END;
+CREATE TRIGGER IF NOT EXISTS jobs_au AFTER UPDATE ON jobs BEGIN
+  INSERT INTO jobs_fts(jobs_fts, rowid, title, location, department, description)
+  VALUES ('delete', old.id, old.title, old.location, old.department, old.description);
+  INSERT INTO jobs_fts(rowid, title, location, department, description)
+  VALUES (new.id, new.title, new.location, new.department, new.description);
+END;
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS crawl_runs (
     id           INTEGER PRIMARY KEY,
@@ -72,6 +99,8 @@ pub struct JobUpsert<'a> {
     pub location: Option<&'a str>,
     pub department: Option<&'a str>,
     pub apply_url: &'a str,
+    pub description: Option<&'a str>,
+    pub remote: Option<bool>,
     pub posted_at: Option<&'a str>,
     pub raw_json: &'a str,
 }
@@ -83,6 +112,20 @@ impl Db {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
+        // External-content FTS5 tables report the linked table's row count for
+        // COUNT(*) — useless as a "is the index built?" signal. Track with a
+        // meta key instead; bump the version when SCHEMA changes meaningfully.
+        const FTS_VERSION: &str = "1";
+        let built: Option<String> = conn
+            .query_row("SELECT value FROM meta WHERE key = 'fts_built'", [], |r| r.get(0))
+            .optional()?;
+        if built.as_deref() != Some(FTS_VERSION) {
+            conn.execute("INSERT INTO jobs_fts(jobs_fts) VALUES('rebuild')", [])?;
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES('fts_built', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![FTS_VERSION],
+            )?;
+        }
         Ok(Self { conn })
     }
 
@@ -147,18 +190,19 @@ impl Db {
                 |r| r.get(0),
             )
             .optional()?;
+        let remote_i = j.remote.map(|b| b as i64);
         let (id, is_new) = match existing {
             Some(id) => {
                 tx.execute(
-                    "UPDATE jobs SET last_seen = ?, title = ?, location = ?, department = ?, apply_url = ?, posted_at = ?, closed_at = NULL WHERE id = ?",
-                    params![now, j.title, j.location, j.department, j.apply_url, j.posted_at, id],
+                    "UPDATE jobs SET last_seen = ?, title = ?, location = ?, department = ?, apply_url = ?, description = COALESCE(?, description), remote = COALESCE(?, remote), posted_at = ?, raw_json = ?, closed_at = NULL WHERE id = ?",
+                    params![now, j.title, j.location, j.department, j.apply_url, j.description, remote_i, j.posted_at, j.raw_json, id],
                 )?;
                 (id, false)
             }
             None => {
                 tx.execute(
-                    "INSERT INTO jobs (company_id, ats_kind, external_id, title, location, department, apply_url, posted_at, first_seen, last_seen, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    params![j.company_id, j.kind.as_str(), j.external_id, j.title, j.location, j.department, j.apply_url, j.posted_at, now, now, j.raw_json],
+                    "INSERT INTO jobs (company_id, ats_kind, external_id, title, location, department, apply_url, description, remote, posted_at, first_seen, last_seen, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![j.company_id, j.kind.as_str(), j.external_id, j.title, j.location, j.department, j.apply_url, j.description, remote_i, j.posted_at, now, now, j.raw_json],
                 )?;
                 (tx.last_insert_rowid(), true)
             }
@@ -269,6 +313,53 @@ impl Db {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// List open jobs, optionally filtered by remote-only and/or FTS5 match query.
+    /// Returns (company, title, location, apply_url, remote).
+    pub fn list_jobs_filtered(
+        &self,
+        limit: usize,
+        remote_only: bool,
+        match_query: Option<&str>,
+    ) -> Result<Vec<(String, String, String, String, Option<bool>)>> {
+        let mut sql = String::from(
+            "SELECT c.name, j.title, COALESCE(j.location, ''), j.apply_url, j.remote
+               FROM jobs j JOIN companies c ON c.id = j.company_id",
+        );
+        if match_query.is_some() {
+            sql.push_str(" JOIN jobs_fts f ON f.rowid = j.id");
+        }
+        sql.push_str(" WHERE j.closed_at IS NULL");
+        if remote_only {
+            sql.push_str(" AND j.remote = 1");
+        }
+        if match_query.is_some() {
+            sql.push_str(" AND jobs_fts MATCH ?");
+        }
+        sql.push_str(if match_query.is_some() {
+            " ORDER BY rank LIMIT ?"
+        } else {
+            " ORDER BY j.last_seen DESC LIMIT ?"
+        });
+        let mut stmt = self.conn.prepare(&sql)?;
+        let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(String, String, String, String, Option<bool>)> {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<i64>>(4)?.map(|i| i != 0),
+            ))
+        };
+        let rows: Vec<_> = if let Some(q) = match_query {
+            stmt.query_map(params![q, limit as i64], map_row)?
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(params![limit as i64], map_row)?
+                .collect::<Result<Vec<_>, _>>()?
+        };
         Ok(rows)
     }
 
