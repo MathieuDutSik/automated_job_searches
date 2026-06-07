@@ -149,13 +149,35 @@ the same entry back to `raw_json`. Unknown fields survive.
 4. The shared `sync_all_for_kind()` handles iteration, the politeness
    delay, upserting, 404 handling, and the close-unseen-jobs sweep.
 
+## Composite slugs
+
+`companies.ats_slug` is a single TEXT column. For ATSes whose API needs
+multiple identifiers, the slug encodes them with `/` separators:
+
+- **Workday**: `tenant/wd{N}/site` — e.g. `nvidia/wd5/NVIDIAExternalCareerSite`.
+  - `tenant` and `wd{N}` come from the host (`nvidia.wd5.myworkdayjobs.com`).
+  - `site` is the first path segment that isn't a language code (`en-US`,
+    `fr_FR`, ...), grabbed by `is_lang_code()` in `ats.rs`.
+  - The adapter splits the slug back inside `fetch_jobs`.
+
+If a Workday URL lacks a site segment (bare tenant root, e.g.
+`https://nvidia.wd5.myworkdayjobs.com/`), `classify_apply_url` returns
+`None` — we can't sync it without the site name. Earlier short slugs (just
+`tenant`) from before this scheme will fail at sync time with a clear error
+and can be removed from the DB.
+
+All other ATSes use a flat single-token slug.
+
 ## Roadmap
 
-1. **More ATS adapters** — Workable, Breezy, Smartrecruiters, Recruitee,
-   Personio, JazzHR, Teamtailor, BambooHR, Pinpoint. Same pattern as the
-   existing three; each is ~50 lines.
-2. **`discover` command** — Google Custom Search Engine queries like
+1. **More ATS adapters** — Workable, Breezy, Personio, JazzHR, Teamtailor,
+   Pinpoint, Comeet. Same pattern as the existing seven; each is ~50-80
+   lines.
+2. **Descriptions for SmartRecruiters / BambooHR / Workday** — these three
+   only expose summary data in the listing API; a separate per-posting
+   fetch is required (and at SmartRecruiters/Workday scale, that's
+   thousands of extra requests per sync). Worth doing behind a `--full`
+   flag if rich text matters.
+3. **`discover` command** — Google Custom Search Engine queries like
    `site:boards.greenhouse.io "engineer" "remote"` to find new ATS slugs
    beyond what crawlers surface.
-3. **Workday adapter** — separate effort. Workday uses per-tenant POST
-   endpoints with anti-bot, so it'll need careful work.

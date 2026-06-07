@@ -141,11 +141,28 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
         return Some(AtsRef { kind: AtsKind::Jazzhr, slug: slug.to_string(), external_id });
     }
 
-    // *.{wd_n}.myworkdayjobs.com/{tenant}/job/{...}
+    // {tenant}.wd{N}.myworkdayjobs.com/[lang/]{site}/job/{loc}/{title}_{id}
+    //
+    // Workday URLs encode three pieces — tenant, region (wd1..wd12), and the
+    // career-site name — which the adapter all needs to hit the JSON
+    // endpoint. We pack them as a composite slug `tenant/wd{N}/site` so
+    // `companies.ats_slug` stays a single column. Drops anything that
+    // looks like a language code (`en-US`, `fr_FR`, `de`) before picking
+    // the site name.
     if host.ends_with(".myworkdayjobs.com") {
-        let slug = host.split('.').next().unwrap_or("").to_string();
-        let external_id = segs.last().map(|s| s.to_string());
-        return Some(AtsRef { kind: AtsKind::Workday, slug, external_id });
+        let host_parts: Vec<&str> = host.split('.').collect();
+        if host_parts.len() >= 4 {
+            let tenant = host_parts[0];
+            let region = host_parts[1];
+            if region.starts_with("wd") && !tenant.is_empty() {
+                let site = segs.iter().find(|s| !is_lang_code(s)).map(|s| s.to_string());
+                if let Some(site) = site {
+                    let composite = format!("{tenant}/{region}/{site}");
+                    let external_id = segs.last().map(|s| s.to_string());
+                    return Some(AtsRef { kind: AtsKind::Workday, slug: composite, external_id });
+                }
+            }
+        }
     }
 
     // comeet.com/jobs/{slug}/...
@@ -157,6 +174,22 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
     }
 
     None
+}
+
+/// True for segments that look like an i18n locale (`en`, `en-US`, `fr_FR`).
+/// Used to skip past language-prefix path segments on Workday job URLs so
+/// the next segment, which IS the career-site name, is what gets captured.
+fn is_lang_code(s: &str) -> bool {
+    match s.len() {
+        2 => s.chars().all(|c| c.is_ascii_alphabetic()),
+        5 => {
+            let bytes = s.as_bytes();
+            (bytes[2] == b'-' || bytes[2] == b'_')
+                && s[..2].chars().all(|c| c.is_ascii_alphabetic())
+                && s[3..].chars().all(|c| c.is_ascii_alphabetic())
+        }
+        _ => false,
+    }
 }
 
 /// Detect URLs that are obvious login/signup walls rather than real apply
@@ -250,6 +283,42 @@ mod tests {
     #[test]
     fn other_returns_none_for_bad_url() {
         assert!(classify_or_other("mailto:hr@acme.com").is_none());
+    }
+
+    #[test]
+    fn workday_composite_slug() {
+        let r = classify_apply_url(
+            "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/job/Israel-Yokneam/Engineer_JR2016630",
+        )
+        .unwrap();
+        assert_eq!(r.kind, AtsKind::Workday);
+        assert_eq!(r.slug, "nvidia/wd5/NVIDIAExternalCareerSite");
+        assert_eq!(r.external_id.as_deref(), Some("Engineer_JR2016630"));
+    }
+
+    #[test]
+    fn workday_no_lang_prefix() {
+        let r = classify_apply_url(
+            "https://salesforce.wd1.myworkdayjobs.com/External_Career_Site/job/CA-San-Francisco/Eng_JR0987",
+        )
+        .unwrap();
+        assert_eq!(r.slug, "salesforce/wd1/External_Career_Site");
+    }
+
+    #[test]
+    fn workday_missing_site_rejected() {
+        // Bare host with no site segment in the path — can't be synced.
+        assert!(classify_apply_url("https://nvidia.wd5.myworkdayjobs.com/").is_none());
+    }
+
+    #[test]
+    fn is_lang_code_basic() {
+        assert!(is_lang_code("en"));
+        assert!(is_lang_code("en-US"));
+        assert!(is_lang_code("fr_FR"));
+        assert!(!is_lang_code("External"));
+        assert!(!is_lang_code("NVIDIAExternalCareerSite"));
+        assert!(!is_lang_code("wd5"));
     }
 
     #[test]

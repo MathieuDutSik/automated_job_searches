@@ -59,8 +59,9 @@ under `workingnomads.com`. Description, location, tags, and remote flag
 
 ## ATS adapters
 
-Wired for Greenhouse, Ashby, and Lever. Each sync populates the plain-text
-description, the structured `remote` flag, and the per-job raw JSON:
+Wired for seven ATSes. Each sync populates the plain-text description
+(when the ATS exposes one in the listing API), the structured `remote`
+flag, and the per-job raw JSON.
 
 - **Ashby** — `isRemote`, `descriptionPlain` (cheap — already in the
   posting API response).
@@ -70,16 +71,39 @@ description, the structured `remote` flag, and the per-job raw JSON:
   the adapter decodes entities, strips tags via `scraper`, collapses
   whitespace. Remote detection is heuristic: any office or location name
   matching `remote` / `anywhere` / `work from home` flips the flag.
+- **SmartRecruiters** — `https://api.smartrecruiters.com/v1/companies/{Slug}/postings`,
+  paginated at 100/page until `totalFound` is reached. Apply URL is
+  reconstructed as `https://jobs.smartrecruiters.com/{Slug}/{id}`. The
+  `remote` flag comes from `location.remote`. **No description in the
+  listing API** — would need a per-posting fetch
+  (`/postings/{id}`); deferred. Bosch Group is the canonical big-tenant
+  smoke test (~4500 postings).
+- **BambooHR** — `https://{slug}.bamboohr.com/careers/list`. Single-shot
+  (no pagination — endpoint always returns the full set). `isRemote`
+  field present in the response; falls back to `locationType == "2"` or
+  the location name containing `remote`. **No description in the listing
+  API.**
+- **Recruitee** — `https://{slug}.recruitee.com/api/offers/`. Single-shot.
+  Concatenates `description` + `requirements` (both HTML), strips tags,
+  for the FTS-indexed description. Carries `remote` directly.
+- **Workday** — POST `https://{tenant}.{wdN}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs`
+  with `{"limit":20,"offset":N,"appliedFacets":{},"searchText":""}`,
+  paginated. The composite slug `tenant/wdN/site` is split inside the
+  adapter (see [DESIGN.md](DESIGN.md) for why Workday needs a composite
+  slug). One quirk: Workday returns `total` only on page 1; subsequent
+  pages report `total: 0`, so the adapter pins the figure from page 1
+  and uses it as the upper bound. `remote` is heuristic from
+  `locationsText` (`Remote` / `Anywhere`). **No description in the
+  listing endpoint** — Workday has a separate per-job POST that the
+  adapter doesn't call yet.
 
 The catch-all `AtsKind::Other` covers anything not matching a known ATS —
-company careers pages, sub-aggregators (`jobs.solana.com`,
-`careers.smartrecruiters.com`, EU Greenhouse mirrors, ...). These aren't
-dropped; they're stored with the URL host as slug so they still appear in
-`list jobs`.
+company careers pages, sub-aggregators (`jobs.solana.com`, EU Greenhouse
+mirrors, ...). These aren't dropped; they're stored with the URL host as
+slug so they still appear in `list jobs`.
 
 Pending adapters (see [DESIGN.md](DESIGN.md) roadmap): Workable, Breezy,
-Smartrecruiters, Recruitee, Personio, JazzHR, Teamtailor, BambooHR,
-Pinpoint, Workday.
+Personio, JazzHR, Teamtailor, Pinpoint, Comeet.
 
 ## Candidates evaluated and rejected
 

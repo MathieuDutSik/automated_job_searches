@@ -7,8 +7,12 @@ use crate::ats::AtsKind;
 use crate::db::{Db, JobUpsert};
 
 pub mod ashby;
+pub mod bamboohr;
 pub mod greenhouse;
 pub mod lever;
+pub mod recruitee;
+pub mod smartrecruiters;
+pub mod workday;
 
 const POLITENESS_DELAY: Duration = Duration::from_millis(250);
 
@@ -45,6 +49,10 @@ pub fn all() -> Vec<Box<dyn AtsAdapter>> {
         Box::new(greenhouse::Greenhouse),
         Box::new(ashby::Ashby),
         Box::new(lever::Lever),
+        Box::new(smartrecruiters::SmartRecruiters),
+        Box::new(bamboohr::BambooHr),
+        Box::new(recruitee::Recruitee),
+        Box::new(workday::Workday),
     ]
 }
 
