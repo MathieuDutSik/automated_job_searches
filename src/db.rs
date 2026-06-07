@@ -77,7 +77,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status  ON jobs(status) WHERE status != 'new
 CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(
     title, location, department, description,
     content='jobs', content_rowid='id',
-    tokenize='trigram'
+    tokenize = "unicode61 tokenchars '+#.'"
 );
 
 CREATE TRIGGER IF NOT EXISTS jobs_ai AFTER INSERT ON jobs BEGIN
@@ -127,15 +127,30 @@ impl Db {
         ensure_column(&conn, "jobs", "status", "TEXT NOT NULL DEFAULT 'new'")?;
         ensure_column(&conn, "jobs", "status_changed_at", "TEXT")?;
         ensure_column(&conn, "jobs", "status_note", "TEXT")?;
-        conn.execute_batch(SCHEMA_DERIVED)?;
+
         // External-content FTS5 tables report the linked table's row count for
         // COUNT(*) — useless as a "is the index built?" signal. Track with a
-        // meta key instead; bump the version when SCHEMA changes meaningfully.
-        const FTS_VERSION: &str = "1";
+        // meta key instead; bump FTS_VERSION whenever the virtual-table
+        // definition (columns, tokenizer, ...) changes meaningfully, and the
+        // next open drops + recreates the FTS table to pick up the change.
+        // v1 → v2: trigram → unicode61 with tokenchars '+#.' (word-bounded
+        // matching so `rust` no longer matches `trusted`, while `c++` etc.
+        // still index as single tokens).
+        const FTS_VERSION: &str = "2";
         let built: Option<String> = conn
             .query_row("SELECT value FROM meta WHERE key = 'fts_built'", [], |r| r.get(0))
             .optional()?;
-        if built.as_deref() != Some(FTS_VERSION) {
+        let fts_stale = built.as_deref() != Some(FTS_VERSION);
+        if fts_stale {
+            conn.execute_batch(
+                "DROP TRIGGER IF EXISTS jobs_ai;
+                 DROP TRIGGER IF EXISTS jobs_ad;
+                 DROP TRIGGER IF EXISTS jobs_au;
+                 DROP TABLE IF EXISTS jobs_fts;",
+            )?;
+        }
+        conn.execute_batch(SCHEMA_DERIVED)?;
+        if fts_stale {
             conn.execute("INSERT INTO jobs_fts(jobs_fts) VALUES('rebuild')", [])?;
             conn.execute(
                 "INSERT INTO meta(key, value) VALUES('fts_built', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",

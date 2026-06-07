@@ -102,9 +102,13 @@ A SQLite file (default `<repo>/jobs.db`) with:
   `status_note` for your own pipeline state. `closed_at` is what the ATS says;
   `status` is what you say — they're independent.
 - `jobs_fts` — FTS5 virtual table mirroring `title`/`location`/`department`/
-  `description` with the `trigram` tokenizer, kept in sync by triggers.
-  Powers `list jobs --match <query>`. Trigram tokenization means queries with
-  punctuation (`c++`, `c#`, `.net`) work — quote them as phrases.
+  `description`, kept in sync by triggers. Powers `list jobs --match <query>`.
+  Tokenizer is `unicode61 tokenchars '+#.'` — words are split on whitespace
+  and punctuation **except** `+`, `#`, `.`, so `c++` / `c#` / `.net` index as
+  single tokens (quote them as phrases when querying), while `rust` matches
+  only the word `rust` and not `trusted`/`trust`. Separators include space,
+  `/`, `-`, `,`, `(`, `)`, etc. — anything not a word character or in
+  `tokenchars`.
 - `crawl_runs` — one row per crawler invocation, with counts and errors. Use
   it to spot which sources are healthy.
 - `meta` — internal key/value (currently tracks the FTS5 build version, so
