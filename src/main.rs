@@ -8,7 +8,9 @@ mod adapters;
 mod ats;
 mod crawlers;
 mod db;
+mod discover;
 mod http;
+mod search;
 
 use crate::db::{Db, StatusFilter};
 
@@ -34,7 +36,17 @@ enum Cmd {
     /// Iterates over every company in the DB matching the given ATS kind.
     /// Use "all" to run every registered adapter.
     Sync {
-        /// ATS name (greenhouse | ashby | lever), or "all"
+        /// ATS name (greenhouse | ashby | lever | smartrecruiters | bamboohr |
+        /// recruitee | workday), or "all"
+        name: String,
+    },
+    /// Discover new ATS company slugs via web-search engine queries
+    /// (currently Brave; reads BRAVE_API_KEY from the environment).
+    /// Each ATS has a curated set of `site:` / `inurl:` queries; classified
+    /// hits become new `companies` rows that `sync` will then pull jobs for.
+    Discover {
+        /// ATS name to discover for (greenhouse | ashby | lever |
+        /// smartrecruiters | bamboohr | recruitee | workday), or "all"
         name: String,
     },
     /// List rows from the database
@@ -225,6 +237,52 @@ async fn main() -> Result<()> {
             let jobs = db.list_jobs(usize::MAX)?.len();
             println!("companies: {companies}");
             println!("open jobs: {jobs}");
+        }
+        Cmd::Discover { name } => {
+            let engine = search::brave::Brave::from_env()?;
+            let plans: Vec<&'static discover::DiscoverPlan> = if name == "all" {
+                discover::PLANS.iter().collect()
+            } else {
+                let p = discover::plan_for(&name).ok_or_else(|| {
+                    let known: Vec<&str> =
+                        discover::PLANS.iter().map(|p| p.kind.as_str()).collect();
+                    anyhow::anyhow!(
+                        "unknown ATS '{name}'. known: {} (or 'all')",
+                        known.join(", ")
+                    )
+                })?;
+                vec![p]
+            };
+            for plan in plans {
+                let label = format!("discover:{}", plan.kind.as_str());
+                let run_id = db.start_run(&label)?;
+                match discover::run_plan(&db, &engine, plan).await {
+                    Ok(rep) => {
+                        db.finish_run(
+                            run_id,
+                            true,
+                            None,
+                            rep.urls_seen,
+                            rep.companies_new,
+                            None,
+                        )?;
+                        info!(
+                            kind = rep.kind,
+                            queries = rep.queries_sent,
+                            urls = rep.urls_seen,
+                            classified = rep.urls_classified,
+                            companies_new = rep.companies_new,
+                            companies_seen = rep.companies_seen,
+                            "discover finished"
+                        );
+                    }
+                    Err(e) => {
+                        db.finish_run(run_id, false, None, 0, 0, Some(&e.to_string()))?;
+                        error!(kind = plan.kind.as_str(), error = %e, "discover failed");
+                        return Err(e);
+                    }
+                }
+            }
         }
         Cmd::Mark { id, status, note } => {
             let canonical = match status.as_str() {

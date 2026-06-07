@@ -105,6 +105,52 @@ slug so they still appear in `list jobs`.
 Pending adapters (see [DESIGN.md](DESIGN.md) roadmap): Workable, Breezy,
 Personio, JazzHR, Teamtailor, Pinpoint, Comeet.
 
+## Search-engine discovery (`ajs discover`)
+
+`discover` complements `crawl` by running targeted `site:` / phrase
+queries through a web-search engine, classifying each returned URL, and
+upserting matching slugs as new `companies` rows that `sync` will then
+hit. Query templates per ATS live in `src/discover.rs::PLANS`.
+
+### Brave Search backend
+
+- Needs `BRAVE_API_KEY` env var.
+- Free tier: ~2000 queries/month, 1 req/s rate limit (the runner sleeps
+  1.1s between queries).
+- Caps `count` at 20 results per query.
+
+### Per-ATS observations on Brave
+
+| ATS | Query strategy | Brave yield (sample) |
+|---|---|---|
+| Greenhouse | `site:boards.greenhouse.io "Remote"` (+ `job-boards.greenhouse.io`) | Works well — TLD-distinguished |
+| Ashby | `site:jobs.ashbyhq.com "Remote"` | Works well |
+| Lever | `site:jobs.lever.co "Remote"` | Works well |
+| SmartRecruiters | `site:jobs.smartrecruiters.com "Remote"` | Works well |
+| Recruitee | `site:recruitee.com "Remote"` | **Excellent** — Brave returns 20 per-tenant subdomains directly; ~15 new companies per query |
+| Workday | `site:myworkdayjobs.com "Remote"` | **Excellent** — same pattern; big-name tenants land immediately (Cisco, Novartis, U-Haul, ...) |
+| BambooHR | `site:bamboohr.com {keyword} remote` × N keywords | **Poor** — Brave's index is dominated by the marketing `www.bamboohr.com` site; need multiple keyword-rich queries to fish out per-tenant boards. ~5 new companies per `discover bamboohr`. |
+
+### Brave-specific quirks
+
+- **`inurl:` is non-functional** — silently returns 0 results, dropped
+  from all plans.
+- **`site:` subdomain inclusion varies by root** — `recruitee.com` and
+  `myworkdayjobs.com` return subdomain URLs by default; `bamboohr.com`
+  collapses to `www.`.
+- **Pre-classifier guards in `ats.rs`** reject obvious non-tenant
+  subdomains (`www`, `developers`, `api`, `docs`, ...) and URLs that
+  don't carry an expected careers/jobs path component. Without these,
+  marketing pages would upsert as bogus "companies".
+
+### Upgrading to Google CSE later
+
+Google CSE supports `inurl:` properly and indexes the small subdomain
+hosts that Brave deprioritizes. When BambooHR recall starts to matter
+more than it does today, the `SearchEngine` trait gives a one-file path:
+implement `src/search/google.rs`, swap which engine `Cmd::Discover`
+constructs.
+
 ## Candidates evaluated and rejected
 
 Aggregators that were triaged and **not** added, with the reason:

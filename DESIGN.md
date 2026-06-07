@@ -9,15 +9,23 @@ traits (`Crawler` and `AtsAdapter`). For user-facing CLI instructions see
 
 `ajs` separates **discovery** from **sync**:
 
-1. **Crawlers** scrape aggregator sites to find which company is hosted on
-   which ATS — output is `(company, ats_kind, ats_slug)` tuples (plus a
-   sample of jobs).
-2. **Adapters** take a known slug and pull the full live job list from the
-   ATS's public JSON API.
+1. **Discovery** finds which company is hosted on which ATS — output is
+   `(company, ats_kind, ats_slug)` tuples. Two flavors:
+   - **Crawlers** scrape aggregator sites (RSS / JSON / HTML) — broad
+     surface, no API costs.
+   - **`discover`** runs curated `site:` / phrase queries through a web
+     search engine (Brave today; extensible via the `SearchEngine` trait
+     in `src/search/`) targeted at a single ATS. Higher precision per
+     query, gated by API quota.
+2. **Adapters** take a known slug and pull the full live job list from
+   the ATS's public JSON API.
 
-The typical workflow is `crawl all` once to populate `companies`, then
-`sync all` whenever you want fresh job lists. Both phases are idempotent;
-re-runs update `last_seen` and mark disappeared jobs `closed_at`.
+The typical workflow is `crawl all` (and/or `discover all`) once to
+populate `companies`, then `sync all` whenever you want fresh job lists.
+All three phases are idempotent — re-runs update `last_seen` and mark
+disappeared jobs `closed_at`. Each invocation is recorded in `crawl_runs`
+(crawls, syncs, and discover runs all share the table; the `source` column
+is prefixed `discover:` / `sync:` to disambiguate).
 
 ## What it stores
 
@@ -62,16 +70,20 @@ newly-added columns. The FTS table is dropped + recreated when
 
 ```
 src/
-  main.rs            # clap entrypoint: crawl | sync | list | status | mark
+  main.rs            # clap entrypoint: crawl | discover | sync | list | status | mark
   db.rs              # schema, migrations, upsert helpers, list_jobs_filtered
   http.rs            # shared reqwest client (UA, timeout, gzip/brotli)
   ats.rs             # classify_apply_url() — recognizes 14 ATS URL patterns
-  crawlers/          # discovery: find (company, ats_kind, ats_slug)
+  discover.rs        # search-engine-driven discovery: PLANS array + runner
+  crawlers/          # aggregator-driven discovery
     mod.rs           # trait Crawler + registry
     ...              # one module per crawler — see SOURCES.md
   adapters/          # sync: for a known slug, pull all live jobs from ATS API
     mod.rs           # trait AtsAdapter + registry + sync_all_for_kind()
     ...              # one module per ATS — see SOURCES.md
+  search/            # search-engine backends
+    mod.rs           # trait SearchEngine + SearchHit
+    brave.rs         # Brave Search API (reads BRAVE_API_KEY env)
 ```
 
 ## Crawler trait
@@ -136,6 +148,25 @@ the same entry back to `raw_json`. Unknown fields survive.
    - `pub mod <name>;`
    - add `Box::new(<name>::YourName)` to the `all()` vector.
 3. Run `cargo test` — the registry is exercised by the integration code.
+
+## SearchEngine trait
+
+```rust
+#[async_trait(?Send)]
+pub trait SearchEngine {
+    fn name(&self) -> &'static str;
+    async fn search(&self, query: &str, count: u32) -> Result<Vec<SearchHit>>;
+}
+pub struct SearchHit { pub url: String }
+```
+
+The `discover.rs` runner is engine-agnostic: it iterates each ATS's query
+templates, feeds every returned URL through `ats::classify_apply_url`
+(strict — not the `_or_other` fallback), discards everything whose `kind`
+doesn't match the plan's expected kind, and upserts whatever survives.
+This filtering is important — search engines return a lot of unrelated
+hits (Reddit threads, news articles, doc pages) that mention the host
+name without being an actual ATS apply URL.
 
 ## Adding a new ATS adapter
 

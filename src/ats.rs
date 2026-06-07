@@ -101,13 +101,32 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
     }
 
     // {slug}.bamboohr.com/[careers|jobs]/{id}
+    //
+    // Reject non-tenant subdomains (www marketing, developers docs, etc.)
+    // and pages that aren't on a careers/jobs path — both classes leak in
+    // when discover/crawl picks up unrelated bamboohr.com URLs.
     if let Some(slug) = host.strip_suffix(".bamboohr.com") {
+        if is_non_tenant_subdomain(slug) {
+            return None;
+        }
+        if !segs.iter().any(|s| matches!(*s, "careers" | "jobs")) {
+            return None;
+        }
         let external_id = segs.iter().rev().find(|s| s.chars().all(|c| c.is_ascii_digit())).map(|s| s.to_string());
         return Some(AtsRef { kind: AtsKind::Bamboohr, slug: slug.to_string(), external_id });
     }
 
     // {slug}.recruitee.com/o/{id-slug}
+    //
+    // Same defensive checks — www.recruitee.com is the marketing site, and
+    // the careers path component (`o`) is required for tenant URLs.
     if let Some(slug) = host.strip_suffix(".recruitee.com") {
+        if is_non_tenant_subdomain(slug) {
+            return None;
+        }
+        if !segs.iter().any(|s| matches!(*s, "o" | "careers")) {
+            return None;
+        }
         let external_id = segs.iter().position(|s| *s == "o").and_then(|i| segs.get(i + 1)).map(|s| s.to_string());
         return Some(AtsRef { kind: AtsKind::Recruitee, slug: slug.to_string(), external_id });
     }
@@ -174,6 +193,19 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
     }
 
     None
+}
+
+/// True for subdomain prefixes that aren't tenant slugs — `www` (marketing),
+/// `developers` (dev docs), `api`, etc. Used to keep search-engine discover
+/// runs from upserting bogus rows when an ATS root domain (`bamboohr.com`,
+/// `recruitee.com`) also hosts unrelated content under non-tenant subdomains.
+fn is_non_tenant_subdomain(slug: &str) -> bool {
+    matches!(
+        slug,
+        "www" | "developers" | "developer" | "api" | "docs" | "doc" |
+        "support" | "help" | "blog" | "store" | "shop" | "status" |
+        "marketing" | "about" | "info"
+    )
 }
 
 /// True for segments that look like an i18n locale (`en`, `en-US`, `fr_FR`).
@@ -283,6 +315,32 @@ mod tests {
     #[test]
     fn other_returns_none_for_bad_url() {
         assert!(classify_or_other("mailto:hr@acme.com").is_none());
+    }
+
+    #[test]
+    fn bamboohr_rejects_marketing_subdomain() {
+        // www.bamboohr.com is the marketing site, not a tenant.
+        assert!(classify_apply_url("https://www.bamboohr.com/careers/engineering-it-team").is_none());
+        // developers.bamboohr.com is dev docs.
+        assert!(classify_apply_url("https://developers.bamboohr.com/jobs/anything").is_none());
+    }
+
+    #[test]
+    fn bamboohr_requires_careers_path() {
+        // A tenant subdomain on an unrelated path should not classify.
+        assert!(classify_apply_url("https://sololearn.bamboohr.com/about").is_none());
+        // Tenant with a real jobs path classifies cleanly.
+        let r = classify_apply_url("https://sololearn.bamboohr.com/jobs/view.php").unwrap();
+        assert_eq!(r.kind, AtsKind::Bamboohr);
+        assert_eq!(r.slug, "sololearn");
+    }
+
+    #[test]
+    fn recruitee_rejects_marketing_and_requires_offer_path() {
+        assert!(classify_apply_url("https://www.recruitee.com/features").is_none());
+        let r = classify_apply_url("https://exeon.recruitee.com/o/senior-backend-developer").unwrap();
+        assert_eq!(r.kind, AtsKind::Recruitee);
+        assert_eq!(r.slug, "exeon");
     }
 
     #[test]

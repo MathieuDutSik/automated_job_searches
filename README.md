@@ -24,9 +24,13 @@ which ATS. **Adapters** then sync the full live job list for every known
 company from the ATS's public JSON API.
 
 ```sh
-# Phase 1: discover companies + a sample of jobs
+# Phase 1a: discover companies via aggregator crawlers
 ajs crawl <name>                  # one crawler (`ajs crawl --help` for names)
 ajs crawl all                     # every registered crawler
+
+# Phase 1b: discover companies via web-search queries (Brave; needs BRAVE_API_KEY)
+ajs discover <ats>                # one ATS (`ajs discover --help` for names)
+ajs discover all                  # every registered ATS plan
 
 # Phase 2: refresh full job lists from the ATS JSON APIs
 ajs sync <ats>                    # one ATS (iterates every company of that kind)
@@ -54,9 +58,11 @@ ajs list jobs --applied                         # only your applied rows
 ajs list jobs --all                             # include `dismissed` again
 ```
 
-The typical workflow is `crawl all` once to populate `companies`, then
-`sync all` whenever you want fresh job lists (idempotent — re-runs update
-`last_seen` and mark disappeared jobs `closed_at`).
+The typical workflow is `crawl all` (and/or `discover all`) once to
+populate `companies`, then `sync all` whenever you want fresh job lists
+(idempotent — re-runs update `last_seen` and mark disappeared jobs
+`closed_at`). `discover` is targeted at specific ATSes (you pick which
+to query) while `crawl` walks general aggregator sites.
 
 ### Finding the id for `ajs mark`
 
