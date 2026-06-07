@@ -33,6 +33,41 @@ ajs list jobs --limit 50                # flat list of open jobs
 ajs list by-company --limit 1000        # grouped: each company with its jobs indented
 ajs status                              # DB path + totals
 
+# Filter open jobs by remote flag and/or full-text keywords
+ajs list jobs --remote                          # only ATS-flagged remote roles
+ajs list jobs --match rust                      # title/loc/dept/description match
+ajs list jobs --remote --match 'rust OR zig'    # boolean operators work
+ajs list jobs --match '"c++"'                   # quote terms with punctuation
+
+# Per-user job status (your own pipeline state, separate from ATS open/closed)
+ajs mark 4130 applied --note "via referral"     # tag applied
+ajs mark 3154 dismissed --note "stack mismatch" # hide from default listings
+ajs mark 4130 reset                             # back to `new`
+ajs list jobs --applied                         # only your applied rows
+ajs list jobs --all                             # include `dismissed` again
+```
+
+### Finding the id for `ajs mark`
+
+`<id>` is the integer in the **first column** of `ajs list jobs` — the
+`jobs.id` SQLite primary key. Stable across crawls, syncs, and restarts;
+assigned once and never reused. **Not** the apply URL.
+
+```
+   261  LiveKit | Staff Rust SDK Engineer [remote] | … | https://jobs.ashbyhq.com/livekit/a1d10340-…
+  4130  Binance | Senior QA Engineer, Margin (Rust/Java) [remote] | Asia | https://jobs.lever.co/binance/1b69b321-…
+   ^^^^
+   |
+   `--- this is what you pass to `ajs mark`
+```
+
+So `ajs mark 4130 applied` tags the Binance row; the URL is just shown so
+you can click through. If you only know the URL, look it up with one of:
+
+```sh
+ajs list jobs --match binance | grep 1b69b321  # quick visual grep on URL fragment
+sqlite3 jobs.db "SELECT id FROM jobs WHERE apply_url = 'https://…';"
+
 # Pick a different database file
 ajs --db /path/to/jobs.db crawl all
 ```
@@ -61,10 +96,19 @@ A SQLite file (default `<repo>/jobs.db`) with:
 - `company_discoveries` — append-only log of which crawler saw which company,
   when, and on what page.
 - `jobs` — one row per `(ats_kind, external_id)`. Title, location, apply URL,
-  raw API blob, plus `first_seen`/`last_seen`/`closed_at` for lifecycle
-  tracking. (Not populated yet — see *Status* below.)
+  description (plain text), `remote` flag, raw API blob, plus
+  `first_seen`/`last_seen`/`closed_at` for ATS-side lifecycle, and
+  `status` (`new` | `applied` | `dismissed`) + `status_changed_at` /
+  `status_note` for your own pipeline state. `closed_at` is what the ATS says;
+  `status` is what you say — they're independent.
+- `jobs_fts` — FTS5 virtual table mirroring `title`/`location`/`department`/
+  `description` with the `trigram` tokenizer, kept in sync by triggers.
+  Powers `list jobs --match <query>`. Trigram tokenization means queries with
+  punctuation (`c++`, `c#`, `.net`) work — quote them as phrases.
 - `crawl_runs` — one row per crawler invocation, with counts and errors. Use
   it to spot which sources are healthy.
+- `meta` — internal key/value (currently tracks the FTS5 build version, so
+  a schema bump triggers one automatic rebuild on next open).
 
 The schema is created on first open; re-running is idempotent.
 
@@ -133,10 +177,11 @@ delay, upserting, 404 handling, and the close-unseen-jobs sweep.
   careers pages, sub-aggregators (`jobs.solana.com`, `careers.smartrecruiters.com`,
   EU Greenhouse mirrors, ...). These aren't dropped — they're stored with the
   URL host as slug so you can still see them in `list jobs`.
-- **No ATS adapters yet.** Now that we have real `(ats_kind, ats_slug)` rows
-  for Greenhouse / Ashby / Lever / Workable / Breezy / Jazzhr / ..., the next
-  phase is to add per-ATS adapters that read `companies WHERE ats_kind=?` and
-  pull the full job list via the ATS JSON API for richer/fresher data.
+- **ATS adapters wired for Greenhouse, Ashby, Lever.** Each sync now populates
+  the plain-text description, the structured `remote` flag (Ashby's `isRemote`,
+  Lever's `workplaceType`, Greenhouse's office/location names matched against
+  `remote`/`anywhere`/`work from home`), and the per-job raw JSON. Other ATS
+  adapters (Workable, Breezy, ...) are still pending.
 
 ## Roadmap
 

@@ -5,7 +5,10 @@ use std::path::Path;
 
 use crate::ats::AtsKind;
 
-const SCHEMA: &str = r#"
+// Base tables (idempotent via IF NOT EXISTS). Anything that depends on a
+// column added after the initial release (e.g. `jobs.status`) goes into
+// SCHEMA_DERIVED, applied AFTER ensure_column migrations have run.
+const SCHEMA_BASE: &str = r#"
 CREATE TABLE IF NOT EXISTS companies (
     id           INTEGER PRIMARY KEY,
     name         TEXT NOT NULL,
@@ -26,27 +29,50 @@ CREATE TABLE IF NOT EXISTS company_discoveries (
 );
 
 CREATE TABLE IF NOT EXISTS jobs (
-    id           INTEGER PRIMARY KEY,
-    company_id   INTEGER NOT NULL REFERENCES companies(id),
-    ats_kind     TEXT NOT NULL,
-    external_id  TEXT NOT NULL,
-    title        TEXT NOT NULL,
-    location     TEXT,
-    remote       INTEGER,
-    department   TEXT,
-    apply_url    TEXT NOT NULL,
-    description  TEXT,
-    posted_at    TEXT,
-    first_seen   TEXT NOT NULL,
-    last_seen    TEXT NOT NULL,
-    closed_at    TEXT,
-    raw_json     TEXT NOT NULL,
+    id                INTEGER PRIMARY KEY,
+    company_id        INTEGER NOT NULL REFERENCES companies(id),
+    ats_kind          TEXT NOT NULL,
+    external_id       TEXT NOT NULL,
+    title             TEXT NOT NULL,
+    location          TEXT,
+    remote            INTEGER,
+    department        TEXT,
+    apply_url         TEXT NOT NULL,
+    description       TEXT,
+    posted_at         TEXT,
+    first_seen        TEXT NOT NULL,
+    last_seen         TEXT NOT NULL,
+    closed_at         TEXT,
+    raw_json          TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'new',
+    status_changed_at TEXT,
+    status_note       TEXT,
     UNIQUE(ats_kind, external_id)
 );
 
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS crawl_runs (
+    id           INTEGER PRIMARY KEY,
+    source       TEXT NOT NULL,
+    started_at   TEXT NOT NULL,
+    finished_at  TEXT,
+    ok           INTEGER,
+    http_status  INTEGER,
+    items_seen   INTEGER,
+    items_new    INTEGER,
+    error        TEXT
+);
+"#;
+
+const SCHEMA_DERIVED: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_jobs_open    ON jobs(closed_at) WHERE closed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_remote  ON jobs(remote) WHERE remote = 1 AND closed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_jobs_status  ON jobs(status) WHERE status != 'new';
 
 CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(
     title, location, department, description,
@@ -68,23 +94,6 @@ CREATE TRIGGER IF NOT EXISTS jobs_au AFTER UPDATE ON jobs BEGIN
   INSERT INTO jobs_fts(rowid, title, location, department, description)
   VALUES (new.id, new.title, new.location, new.department, new.description);
 END;
-
-CREATE TABLE IF NOT EXISTS meta (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS crawl_runs (
-    id           INTEGER PRIMARY KEY,
-    source       TEXT NOT NULL,
-    started_at   TEXT NOT NULL,
-    finished_at  TEXT,
-    ok           INTEGER,
-    http_status  INTEGER,
-    items_seen   INTEGER,
-    items_new    INTEGER,
-    error        TEXT
-);
 "#;
 
 pub struct Db {
@@ -111,7 +120,14 @@ impl Db {
             .with_context(|| format!("opening sqlite at {}", path.as_ref().display()))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.execute_batch(SCHEMA)?;
+        conn.execute_batch(SCHEMA_BASE)?;
+        // CREATE TABLE IF NOT EXISTS doesn't help when columns are added later.
+        // Run idempotent ADD COLUMN for any column missing on an existing DB,
+        // BEFORE the derived schema (indexes/FTS/triggers may reference them).
+        ensure_column(&conn, "jobs", "status", "TEXT NOT NULL DEFAULT 'new'")?;
+        ensure_column(&conn, "jobs", "status_changed_at", "TEXT")?;
+        ensure_column(&conn, "jobs", "status_note", "TEXT")?;
+        conn.execute_batch(SCHEMA_DERIVED)?;
         // External-content FTS5 tables report the linked table's row count for
         // COUNT(*) — useless as a "is the index built?" signal. Track with a
         // meta key instead; bump the version when SCHEMA changes meaningfully.
@@ -316,16 +332,17 @@ impl Db {
         Ok(rows)
     }
 
-    /// List open jobs, optionally filtered by remote-only and/or FTS5 match query.
-    /// Returns (company, title, location, apply_url, remote).
+    /// List open jobs, optionally filtered by remote / FTS5 match / status.
+    /// Returns (id, company, title, location, apply_url, remote, status).
     pub fn list_jobs_filtered(
         &self,
         limit: usize,
         remote_only: bool,
         match_query: Option<&str>,
-    ) -> Result<Vec<(String, String, String, String, Option<bool>)>> {
+        status: StatusFilter,
+    ) -> Result<Vec<(i64, String, String, String, String, Option<bool>, String)>> {
         let mut sql = String::from(
-            "SELECT c.name, j.title, COALESCE(j.location, ''), j.apply_url, j.remote
+            "SELECT j.id, c.name, j.title, COALESCE(j.location, ''), j.apply_url, j.remote, j.status
                FROM jobs j JOIN companies c ON c.id = j.company_id",
         );
         if match_query.is_some() {
@@ -334,6 +351,11 @@ impl Db {
         sql.push_str(" WHERE j.closed_at IS NULL");
         if remote_only {
             sql.push_str(" AND j.remote = 1");
+        }
+        match status {
+            StatusFilter::HideDismissed => sql.push_str(" AND j.status != 'dismissed'"),
+            StatusFilter::All => {}
+            StatusFilter::AppliedOnly => sql.push_str(" AND j.status = 'applied'"),
         }
         if match_query.is_some() {
             sql.push_str(" AND jobs_fts MATCH ?");
@@ -344,13 +366,15 @@ impl Db {
             " ORDER BY j.last_seen DESC LIMIT ?"
         });
         let mut stmt = self.conn.prepare(&sql)?;
-        let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(String, String, String, String, Option<bool>)> {
+        let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(i64, String, String, String, String, Option<bool>, String)> {
             Ok((
-                r.get::<_, String>(0)?,
+                r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, String>(3)?,
-                r.get::<_, Option<i64>>(4)?.map(|i| i != 0),
+                r.get::<_, String>(4)?,
+                r.get::<_, Option<i64>>(5)?.map(|i| i != 0),
+                r.get::<_, String>(6)?,
             ))
         };
         let rows: Vec<_> = if let Some(q) = match_query {
@@ -361,6 +385,23 @@ impl Db {
                 .collect::<Result<Vec<_>, _>>()?
         };
         Ok(rows)
+    }
+
+    /// Update the per-user status on a single job row. Status must be one of
+    /// `new` / `applied` / `dismissed`. Returns Err if the id doesn't exist.
+    pub fn set_status(&self, id: i64, status: &str, note: Option<&str>) -> Result<()> {
+        if !matches!(status, "new" | "applied" | "dismissed") {
+            anyhow::bail!("invalid status '{status}' (expected new|applied|dismissed)");
+        }
+        let now = Utc::now().to_rfc3339();
+        let n = self.conn.execute(
+            "UPDATE jobs SET status = ?, status_changed_at = ?, status_note = ? WHERE id = ?",
+            params![status, now, note, id],
+        )?;
+        if n == 0 {
+            anyhow::bail!("no job with id {id}");
+        }
+        Ok(())
     }
 
     pub fn list_jobs(&self, limit: usize) -> Result<Vec<(String, String, String, String)>> {
@@ -383,4 +424,27 @@ impl Db {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
+}
+
+/// Per-job status filter for `list_jobs_filtered`. Default hides dismissed
+/// rows; the other two are explicit user requests.
+pub enum StatusFilter {
+    HideDismissed,
+    All,
+    AppliedOnly,
+}
+
+/// Idempotently add a column to an existing table. SQLite has `CREATE TABLE
+/// IF NOT EXISTS` but no `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so we
+/// inspect `PRAGMA table_info` first.
+fn ensure_column(conn: &Connection, table: &str, column: &str, defn: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .any(|name| name == column);
+    if !exists {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {defn}"))?;
+    }
+    Ok(())
 }

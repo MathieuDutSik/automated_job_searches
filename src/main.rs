@@ -10,7 +10,7 @@ mod crawlers;
 mod db;
 mod http;
 
-use crate::db::Db;
+use crate::db::{Db, StatusFilter};
 
 #[derive(Parser, Debug)]
 #[command(name = "ajs", about = "Automated job searches")]
@@ -44,6 +44,18 @@ enum Cmd {
     },
     /// Print the database location and quick stats
     Status,
+    /// Tag a job with a personal status: `applied`, `dismissed`, or `reset`
+    /// (clears back to `new`). The id is the integer in the first column of
+    /// `list jobs` output — the SQLite primary key, not the apply URL.
+    Mark {
+        /// SQLite `jobs.id` — first column of `list jobs` output. NOT the URL.
+        id: i64,
+        /// `applied` | `dismissed` | `reset`
+        status: String,
+        /// Optional note (e.g. why dismissed, who referred, link to thread)
+        #[arg(long)]
+        note: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -62,6 +74,12 @@ enum ListWhat {
         /// Trigram tokenizer — quote terms with punctuation, e.g. `"c++"`.
         #[arg(long, value_name = "QUERY")]
         r#match: Option<String>,
+        /// Include rows you previously marked `dismissed` (hidden by default).
+        #[arg(long, conflicts_with = "applied")]
+        all: bool,
+        /// Show only rows you marked `applied`.
+        #[arg(long, conflicts_with = "all")]
+        applied: bool,
     },
     /// Print every company that has open jobs, with its jobs indented underneath.
     ByCompany {
@@ -162,14 +180,23 @@ async fn main() -> Result<()> {
                     println!("{kind:<16} {slug:<32} {name}");
                 }
             }
-            ListWhat::Jobs { limit, remote, r#match } => {
-                let rows = db.list_jobs_filtered(limit, remote, r#match.as_deref())?;
-                for (company, title, location, url, remote_flag) in rows {
-                    let tag = match remote_flag {
-                        Some(true) => " [remote]",
+            ListWhat::Jobs { limit, remote, r#match, all, applied } => {
+                let status_filter = if applied {
+                    StatusFilter::AppliedOnly
+                } else if all {
+                    StatusFilter::All
+                } else {
+                    StatusFilter::HideDismissed
+                };
+                let rows = db.list_jobs_filtered(limit, remote, r#match.as_deref(), status_filter)?;
+                for (id, company, title, location, url, remote_flag, status) in rows {
+                    let remote_tag = if remote_flag == Some(true) { " [remote]" } else { "" };
+                    let status_tag = match status.as_str() {
+                        "applied" => " [applied]",
+                        "dismissed" => " [dismissed]",
                         _ => "",
                     };
-                    println!("{company} | {title}{tag} | {location} | {url}");
+                    println!("{id:>6}  {company} | {title}{remote_tag}{status_tag} | {location} | {url}");
                 }
             }
             ListWhat::ByCompany { limit } => {
@@ -193,6 +220,18 @@ async fn main() -> Result<()> {
             let jobs = db.list_jobs(usize::MAX)?.len();
             println!("companies: {companies}");
             println!("open jobs: {jobs}");
+        }
+        Cmd::Mark { id, status, note } => {
+            let canonical = match status.as_str() {
+                "reset" | "new" => "new",
+                "applied" => "applied",
+                "dismissed" => "dismissed",
+                other => anyhow::bail!(
+                    "unknown status '{other}' (expected: applied | dismissed | reset)"
+                ),
+            };
+            db.set_status(id, canonical, note.as_deref())?;
+            println!("job {id}: {canonical}");
         }
     }
     Ok(())
