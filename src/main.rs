@@ -65,13 +65,18 @@ enum ListWhat {
         limit: usize,
     },
     Jobs {
-        #[arg(long, default_value_t = 50)]
-        limit: usize,
+        /// Max rows to return. Unlimited if omitted.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Skip this many rows before returning (paginates with --limit).
+        /// `--start 1000 --limit 50` → rows 1000..1049.
+        #[arg(long, default_value_t = 0)]
+        start: usize,
         /// Only show jobs the ATS flagged as remote.
         #[arg(long)]
         remote: bool,
         /// FTS5 query over title/location/department/description.
-        /// Trigram tokenizer — quote terms with punctuation, e.g. `"c++"`.
+        /// Quote terms with punctuation, e.g. `"c++"`.
         #[arg(long, value_name = "QUERY")]
         r#match: Option<String>,
         /// Include rows you previously marked `dismissed` (hidden by default).
@@ -180,7 +185,7 @@ async fn main() -> Result<()> {
                     println!("{kind:<16} {slug:<32} {name}");
                 }
             }
-            ListWhat::Jobs { limit, remote, r#match, all, applied } => {
+            ListWhat::Jobs { limit, start, remote, r#match, all, applied } => {
                 let status_filter = if applied {
                     StatusFilter::AppliedOnly
                 } else if all {
@@ -188,7 +193,7 @@ async fn main() -> Result<()> {
                 } else {
                     StatusFilter::HideDismissed
                 };
-                let rows = db.list_jobs_filtered(limit, remote, r#match.as_deref(), status_filter)?;
+                let rows = db.list_jobs_filtered(limit, start, remote, r#match.as_deref(), status_filter)?;
                 for (id, company, title, location, url, remote_flag, status) in rows {
                     let remote_tag = if remote_flag == Some(true) { " [remote]" } else { "" };
                     let status_tag = match status.as_str() {

@@ -348,10 +348,13 @@ impl Db {
     }
 
     /// List open jobs, optionally filtered by remote / FTS5 match / status.
+    /// `limit = None` means unlimited (passed to SQLite as `LIMIT -1`).
+    /// `start` is an OFFSET applied before the limit.
     /// Returns (id, company, title, location, apply_url, remote, status).
     pub fn list_jobs_filtered(
         &self,
-        limit: usize,
+        limit: Option<usize>,
+        start: usize,
         remote_only: bool,
         match_query: Option<&str>,
         status: StatusFilter,
@@ -376,10 +379,12 @@ impl Db {
             sql.push_str(" AND jobs_fts MATCH ?");
         }
         sql.push_str(if match_query.is_some() {
-            " ORDER BY rank LIMIT ?"
+            " ORDER BY rank LIMIT ? OFFSET ?"
         } else {
-            " ORDER BY j.last_seen DESC LIMIT ?"
+            " ORDER BY j.last_seen DESC LIMIT ? OFFSET ?"
         });
+        let limit_param: i64 = limit.map(|n| n as i64).unwrap_or(-1);
+        let offset_param: i64 = start as i64;
         let mut stmt = self.conn.prepare(&sql)?;
         let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(i64, String, String, String, String, Option<bool>, String)> {
             Ok((
@@ -393,10 +398,10 @@ impl Db {
             ))
         };
         let rows: Vec<_> = if let Some(q) = match_query {
-            stmt.query_map(params![q, limit as i64], map_row)?
+            stmt.query_map(params![q, limit_param, offset_param], map_row)?
                 .collect::<Result<Vec<_>, _>>()?
         } else {
-            stmt.query_map(params![limit as i64], map_row)?
+            stmt.query_map(params![limit_param, offset_param], map_row)?
                 .collect::<Result<Vec<_>, _>>()?
         };
         Ok(rows)

@@ -34,7 +34,9 @@ ajs sync all                      # every registered adapter
 
 # Inspect the data
 ajs list companies --limit 50           # flat list of companies
-ajs list jobs --limit 50                # flat list of open jobs
+ajs list jobs                           # flat list of open jobs (unlimited by default)
+ajs list jobs --limit 50                # cap to 50 rows
+ajs list jobs --start 1000 --limit 50   # paginate: rows 1000..1049
 ajs list by-company --limit 1000        # grouped: each company with its jobs indented
 ajs status                              # DB path + totals
 
