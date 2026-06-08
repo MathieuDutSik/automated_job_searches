@@ -59,6 +59,21 @@ enum Cmd {
         #[arg(long, default_value = "brave")]
         engine: String,
     },
+    /// Import apply URLs you collected by hand. Each URL is classified via
+    /// the same `ats::classify_apply_url` used by crawlers — recognized
+    /// hits upsert a `companies` row that the next `sync` will pull jobs
+    /// for. Unrecognized URLs are skipped with a warning.
+    ///
+    /// Pass URLs as positional arguments, or omit them and pipe one URL per
+    /// line on stdin (lines starting with `#` and blank lines are ignored).
+    ///
+    ///   ajs import https://boards.greenhouse.io/parity/jobs/4567
+    ///   ajs import < urls.txt
+    ///   pbpaste | ajs import
+    Import {
+        /// URLs to import. If empty, reads stdin.
+        urls: Vec<String>,
+    },
     /// List rows from the database
     List {
         #[command(subcommand)]
@@ -317,6 +332,57 @@ async fn main() -> Result<()> {
                         return Err(e);
                     }
                 }
+            }
+        }
+        Cmd::Import { urls } => {
+            let urls: Vec<String> = if urls.is_empty() {
+                use std::io::BufRead;
+                std::io::stdin()
+                    .lock()
+                    .lines()
+                    .map_while(Result::ok)
+                    .collect()
+            } else {
+                urls
+            };
+            let run_id = db.start_run("import:manual")?;
+            let mut imported_new = 0u64;
+            let mut already_known = 0u64;
+            let mut skipped = 0u64;
+            for raw in &urls {
+                let url = raw.trim();
+                if url.is_empty() || url.starts_with('#') {
+                    continue;
+                }
+                let Some(refr) = ats::classify_apply_url(url) else {
+                    tracing::warn!(url, "unrecognized — not a known ATS, skipping");
+                    skipped += 1;
+                    continue;
+                };
+                match db.upsert_company(None, refr.kind, &refr.slug, "import:manual", Some(url)) {
+                    Ok((_, is_new)) => {
+                        if is_new {
+                            imported_new += 1;
+                            info!(kind = refr.kind.as_str(), slug = %refr.slug, url, "imported");
+                        } else {
+                            already_known += 1;
+                            info!(kind = refr.kind.as_str(), slug = %refr.slug, "already known");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, url, "company upsert failed");
+                        skipped += 1;
+                    }
+                }
+            }
+            db.finish_run(run_id, true, None, imported_new + already_known, imported_new, None)?;
+            println!(
+                "imported {imported_new} new, {already_known} already known, {skipped} skipped"
+            );
+            if imported_new > 0 {
+                println!(
+                    "Run `ajs sync all` (or `ajs sync <ats>`) to pull jobs for the new companies."
+                );
             }
         }
         Cmd::Mark { id, status, note } => {

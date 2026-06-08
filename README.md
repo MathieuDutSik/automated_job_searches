@@ -42,6 +42,14 @@ ajs discover ashby --engine tavily          # cross-check with a different index
 #   firecrawl → FIRECRAWL_DEV_API_KEY                        (500 credits free)
 #   serper    → SERPER_API_KEY                               (paid only — free rejects site:)
 
+# Phase 1c: import apply URLs you collected by hand (escape hatch)
+ajs import https://boards.greenhouse.io/parity/jobs/4567   # one URL
+ajs import < urls.txt                                       # one URL per line
+pbpaste | ajs import                                        # paste from clipboard
+# Each URL → classified → company upserted → next `sync` pulls all its jobs.
+# Unrecognized URLs are skipped with a warning; lines starting with `#` and
+# blank lines are ignored.
+
 # Phase 2: refresh full job lists from the ATS JSON APIs
 ajs sync <ats>                    # one ATS (iterates every company of that kind)
 ajs sync all                      # every registered adapter
