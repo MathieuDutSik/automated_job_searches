@@ -45,9 +45,12 @@ enum Cmd {
     /// hits become new `companies` rows that `sync` will then pull jobs for.
     ///
     /// Choose the engine with `--engine`:
-    ///   brave  — needs BRAVE_API_KEY  (default; broadest free tier)
-    ///   google — needs GOOGLE_API_KEY + GOOGLE_CSE_ID (Programmable Search Engine)
-    ///   you    — needs YDC_API_KEY    (you.com)
+    ///   brave     — needs BRAVE_API_KEY                          (default)
+    ///   google    — needs GOOGLE_API_KEY + GOOGLE_CSE_ID         (Programmable Search Engine)
+    ///   serper    — needs SERPER_API_KEY                         (Google via serper.dev)
+    ///   tavily    — needs TAVILY_API_KEY                         (AI-search)
+    ///   exa       — needs EXA_SECRET_KEY                         (neural; site: auto-converted)
+    ///   firecrawl — needs FIRECRAWL_DEV_API_KEY                  (Google via firecrawl.dev)
     Discover {
         /// ATS name to discover for (greenhouse | ashby | lever |
         /// smartrecruiters | bamboohr | recruitee | workday), or "all"

@@ -32,12 +32,15 @@ ajs crawl all                     # every registered crawler
 ajs discover <ats>                          # one ATS, default engine (brave)
 ajs discover all                            # every ATS plan, default engine
 ajs discover ashby --engine google          # use Google CSE for this run
-ajs discover bamboohr --engine you          # use you.com for this run
+ajs discover ashby --engine tavily          # cross-check with a different index
 #
-# Engines and the env vars they need:
-#   brave  → BRAVE_API_KEY                                   (default; 2k q/mo free)
-#   google → GOOGLE_API_KEY + GOOGLE_CSE_ID                  (100 q/day free, $5/1k after)
-#   you    → YDC_API_KEY                                      (free tier ~5k q/mo)
+# Engines and the env vars they need (see SOURCES.md for details):
+#   brave     → BRAVE_API_KEY                                (default; 2k q/mo free)
+#   google    → GOOGLE_API_KEY + GOOGLE_CSE_ID               (100 q/day free, $5/1k after)
+#   tavily    → TAVILY_API_KEY                               (dev tier ~1k q/mo)
+#   exa       → EXA_SECRET_KEY                               (1k q/mo free)
+#   firecrawl → FIRECRAWL_DEV_API_KEY                        (500 credits free)
+#   serper    → SERPER_API_KEY                               (paid only — free rejects site:)
 
 # Phase 2: refresh full job lists from the ATS JSON APIs
 ajs sync <ats>                    # one ATS (iterates every company of that kind)

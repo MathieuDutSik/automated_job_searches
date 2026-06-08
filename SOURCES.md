@@ -114,11 +114,14 @@ hit. Query templates per ATS live in `src/discover.rs::PLANS`.
 
 ### Available engines (`--engine <name>`)
 
-| Engine | Default | Env vars | Free tier | `count` cap |
-|---|---|---|---|---|
-| `brave` | ✓ | `BRAVE_API_KEY` | 2k/mo, 1 req/s | 20 |
-| `google` |   | `GOOGLE_API_KEY`, `GOOGLE_CSE_ID` | 100/day | 10 |
-| `you` |   | `YDC_API_KEY` | ~5k/mo | depends on plan |
+| Engine | Default | Env vars | Free tier | `count` cap | `site:` works on free? |
+|---|---|---|---|---|---|
+| `brave` | ✓ | `BRAVE_API_KEY` | 2k/mo, 1 req/s | 20 | ✓ (patchy on subdomains) |
+| `google` |   | `GOOGLE_API_KEY`, `GOOGLE_CSE_ID` | 100/day | 10 | ✓ |
+| `serper` |   | `SERPER_API_KEY` | 2.5k credits | — | **✗ — free tier rejects `site:` with HTTP 400** |
+| `tavily` |   | `TAVILY_API_KEY` | dev key, ~1k/mo | 20 | ✓ |
+| `exa` |   | `EXA_SECRET_KEY` | 1k/mo | 10 | ✓ (auto-converted to `includeDomains`) |
+| `firecrawl` |   | `FIRECRAWL_DEV_API_KEY` | 500 credits | 20 | ✓ (Google-backed) |
 
 ### Brave Search backend
 
@@ -126,6 +129,46 @@ hit. Query templates per ATS live in `src/discover.rs::PLANS`.
 - 1.1s politeness sleep between queries to stay under the free-tier rate
   limit.
 - `count` is hard-capped at 20 per Brave's API.
+
+### Tavily backend
+
+- Best free-tier behaviour of the cheap options: honors `site:` queries
+  and returns real subdomain URLs (verified live for `site:jobs.ashbyhq.com`
+  returning Ashby tenant URLs).
+- POST `https://api.tavily.com/search` with `Authorization: Bearer …`.
+- Set `search_depth: "basic"` — `"advanced"` costs more credits per query
+  with marginal benefit for our URL-list use case.
+
+### EXA backend
+
+- POST `https://api.exa.ai/search` with `x-api-key` header.
+- EXA doesn't honor `site:` as a query-string operator; the canonical way
+  to filter by host is the `includeDomains` body field. The adapter
+  automatically extracts any `site:foo.com` token from the query and moves
+  it into `includeDomains`, so the same PLANS list works unchanged. Tests
+  in `src/search/exa.rs` cover this translation.
+- When the query is *only* `site:foo.com` with no keywords, the adapter
+  substitutes `"remote jobs"` (EXA rejects empty queries).
+
+### Firecrawl backend
+
+- POST `https://api.firecrawl.dev/v1/search` with `Authorization: Bearer …`.
+- Firecrawl's search is Google-backed, so it returns the same URL set as
+  Serper would on paid tier. Primary value here is the cheap free tier
+  (500 credits) as a Google-quality alternative.
+- The product is primarily a JS-rendering scraper; the JS-SPA aggregators
+  rejected in the table below could become viable via Firecrawl's
+  `/v1/scrape` endpoint later, behind a separate crawler module.
+
+### Serper backend (limited usefulness on free tier)
+
+- Wired up but **the free Serper plan rejects every query containing
+  `site:`** with HTTP 400 "Query pattern not allowed for free accounts".
+  Every plan in `discover.rs::PLANS` uses `site:`, so `--engine serper`
+  produces zero results on the free tier today.
+- Paid tier ($50/mo for ~50k queries) unlocks operators and would make
+  this engine drop-in equivalent to Google CSE. Kept registered so the
+  upgrade path is trivial if needed.
 
 ### Google CSE backend
 
@@ -147,13 +190,6 @@ setup:
 
 `num` (results per query) is capped at 10 by the API; deeper pagination
 needs the `start` query parameter and a loop — not wired today.
-
-### You.com backend
-
-- Sign up at <https://api.you.com/>, grab the API key, export as
-  `YDC_API_KEY`. No CSE-style configuration.
-- Newest of the three; less battle-tested for `site:` queries than the
-  other two.
 
 ### Per-ATS observations on Brave
 
@@ -181,18 +217,26 @@ needs the `start` query parameter and a loop — not wired today.
 
 ### When to override the default engine
 
-Brave is fine for the four TLD-distinguished ATSes (Greenhouse, Ashby,
-Lever, SmartRecruiters) and for Recruitee / Workday — those return clean
-subdomain results out of the box. Switch with `--engine google` when:
+- **Brave** (default) is fine for the four TLD-distinguished ATSes
+  (Greenhouse, Ashby, Lever, SmartRecruiters) and for Recruitee / Workday
+  — those return clean subdomain results out of the box.
+- **`--engine google`** when Brave's index feels stale (it keeps
+  long-closed jobs in `site:` results) or when discovering a new ATS for
+  the first time.
+- **`--engine tavily`** as a free-tier alternative whose backing index
+  differs from Brave's; running both then deduping covers more of the
+  long tail.
+- **`--engine exa`** when neural/semantic ranking might surface things
+  keyword search misses.
+- **`--engine firecrawl`** as a Google-quality cross-check on a small
+  free credit budget.
+- **`--engine serper`** only on the paid tier — the free tier rejects
+  every `site:`-bearing query (HTTP 400).
 
-- Brave's index feels stale for a given ATS (Brave tends to keep
-  long-closed jobs in `site:` results).
-- Recall on subdomain-pattern ATSes matters — Google's `site:bamboohr.com`
-  returns real per-tenant boards, not just the `www.` marketing site.
-- You're discovering a new ATS for the first time and want maximum recall.
-
-`--engine you` is a third option mostly worth trying when you want to
-compare; the API surface is the smallest of the three.
+Engines are independent — running `discover ashby --engine brave` then
+`discover ashby --engine tavily` will surface a wider company set than
+either alone, since each `upsert_company` is idempotent on
+`(ats_kind, ats_slug)`.
 
 ## Candidates evaluated and rejected
 

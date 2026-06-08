@@ -83,9 +83,12 @@ src/
     ...              # one module per ATS — see SOURCES.md
   search/            # search-engine backends (selected at runtime via --engine)
     mod.rs           # trait SearchEngine + SearchHit + from_env(name) factory
-    brave.rs         # Brave Search API   — reads BRAVE_API_KEY
+    brave.rs         # Brave Search API   — reads BRAVE_API_KEY  (default)
     google.rs        # Google CSE         — reads GOOGLE_API_KEY + GOOGLE_CSE_ID
-    you.rs           # you.com Search API — reads YDC_API_KEY
+    serper.rs        # serper.dev         — reads SERPER_API_KEY (paid only — free rejects site:)
+    tavily.rs        # Tavily AI-search   — reads TAVILY_API_KEY
+    exa.rs           # EXA neural search  — reads EXA_SECRET_KEY (site: auto-converted to includeDomains)
+    firecrawl.rs     # Firecrawl search   — reads FIRECRAWL_DEV_API_KEY
 ```
 
 ## Crawler trait
@@ -162,13 +165,16 @@ pub trait SearchEngine {
 pub struct SearchHit { pub url: String }
 ```
 
-Three backends ship out of the box; CLI picks via `discover --engine <name>`:
+Six backends ship out of the box; CLI picks via `discover --engine <name>`:
 
-| name | env vars | quirks |
+| name | env vars | notes |
 |---|---|---|
-| `brave` | `BRAVE_API_KEY` | Free 2k/mo, 1 req/s. `inurl:` is non-functional; `site:` subdomain inclusion is patchy (see [SOURCES.md](SOURCES.md)). |
-| `google` | `GOOGLE_API_KEY`, `GOOGLE_CSE_ID` | 100/day free, $5/1k after. Best recall and operator support; `num` capped at 10 per request. |
-| `you` | `YDC_API_KEY` | Free tier, no rate limit advertised on free; `num_web_results` honored. |
+| `brave` | `BRAVE_API_KEY` | Default. Free 2k/mo, 1 req/s. `inurl:` non-functional; `site:` subdomain inclusion patchy (see [SOURCES.md](SOURCES.md)). |
+| `google` | `GOOGLE_API_KEY`, `GOOGLE_CSE_ID` | 100/day free, $5/1k after. Best recall and operator support; `num` capped at 10. |
+| `tavily` | `TAVILY_API_KEY` | Different backing index from Brave/Google. Free dev tier honors `site:`. |
+| `exa` | `EXA_SECRET_KEY` | Neural/keyword search. Adapter auto-converts `site:foo.com` to `includeDomains` (EXA doesn't honor the operator in-string). |
+| `firecrawl` | `FIRECRAWL_DEV_API_KEY` | Google-backed search; 500 free credits. |
+| `serper` | `SERPER_API_KEY` | Wired but unusable on free tier — free plan rejects `site:` queries with HTTP 400. |
 
 The `discover.rs` runner is engine-agnostic: it iterates each ATS's query
 templates, feeds every returned URL through `ats::classify_apply_url`
