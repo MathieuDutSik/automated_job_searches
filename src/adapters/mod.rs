@@ -14,7 +14,7 @@ pub mod recruitee;
 pub mod smartrecruiters;
 pub mod workday;
 
-const POLITENESS_DELAY: Duration = Duration::from_millis(250);
+pub const POLITENESS_DELAY: Duration = Duration::from_millis(250);
 
 pub struct AdapterJob {
     pub external_id: String,
@@ -60,6 +60,80 @@ pub fn by_name(name: &str) -> Option<Box<dyn AtsAdapter>> {
     all().into_iter().find(|a| a.kind().as_str() == name)
 }
 
+/// Sync a single (company_id, slug) pair through `adapter`. Returns a
+/// per-call `SyncReport` the caller aggregates as needed. `display_name`
+/// is purely for logging — pass the slug when no human-readable name is
+/// available.
+pub async fn sync_one_slug(
+    db: &Db,
+    adapter: &dyn AtsAdapter,
+    company_id: i64,
+    display_name: &str,
+    slug: &str,
+) -> Result<SyncReport> {
+    let mut report = SyncReport {
+        kind: adapter.kind().as_str(),
+        ..Default::default()
+    };
+    let started = chrono::Utc::now().to_rfc3339();
+    match adapter.fetch_jobs(slug).await {
+        Ok(jobs) => {
+            report.companies_synced = 1;
+            let mut new_here = 0u64;
+            for j in &jobs {
+                let trimmed_title = j.title.trim();
+                let trimmed_loc = j.location.as_deref().map(str::trim);
+                let trimmed_dept = j.department.as_deref().map(str::trim);
+                let trimmed_desc = j.description.as_deref().map(str::trim);
+                let res = db.upsert_job(JobUpsert {
+                    company_id,
+                    kind: adapter.kind(),
+                    external_id: &j.external_id,
+                    title: trimmed_title,
+                    location: trimmed_loc.filter(|s| !s.is_empty()),
+                    department: trimmed_dept.filter(|s| !s.is_empty()),
+                    apply_url: &j.apply_url,
+                    description: trimmed_desc.filter(|s| !s.is_empty()),
+                    remote: j.remote,
+                    posted_at: j.posted_at.as_deref(),
+                    raw_json: &j.raw_json,
+                });
+                match res {
+                    Ok((_, is_new)) => {
+                        report.jobs_seen += 1;
+                        if is_new {
+                            report.jobs_new += 1;
+                            new_here += 1;
+                        }
+                    }
+                    Err(e) => warn!(error = %e, slug, "job upsert failed"),
+                }
+            }
+            let closed = db
+                .mark_unseen_jobs_closed(company_id, adapter.kind(), &started)
+                .unwrap_or(0);
+            report.jobs_closed = closed as u64;
+            info!(
+                company = %display_name,
+                slug,
+                jobs = jobs.len(),
+                new = new_here,
+                closed,
+                "synced"
+            );
+        }
+        Err(e) => {
+            if e.to_string().contains("404") {
+                report.companies_404 = 1;
+                warn!(slug, "ATS returned 404; slug may be stale");
+            } else {
+                warn!(error = %e, slug, "fetch failed");
+            }
+        }
+    }
+    Ok(report)
+}
+
 /// Sync every company in the DB whose `ats_kind` matches `adapter.kind()`.
 pub async fn sync_all_for_kind(db: &Db, adapter: &dyn AtsAdapter) -> Result<SyncReport> {
     let mut report = SyncReport {
@@ -76,62 +150,12 @@ pub async fn sync_all_for_kind(db: &Db, adapter: &dyn AtsAdapter) -> Result<Sync
         if idx > 0 {
             tokio::time::sleep(POLITENESS_DELAY).await;
         }
-        let started = chrono::Utc::now().to_rfc3339();
-        match adapter.fetch_jobs(&slug).await {
-            Ok(jobs) => {
-                report.companies_synced += 1;
-                let mut new_here = 0u64;
-                for j in &jobs {
-                    let trimmed_title = j.title.trim();
-                    let trimmed_loc = j.location.as_deref().map(str::trim);
-                    let trimmed_dept = j.department.as_deref().map(str::trim);
-                    let trimmed_desc = j.description.as_deref().map(str::trim);
-                    let res = db.upsert_job(JobUpsert {
-                        company_id,
-                        kind: adapter.kind(),
-                        external_id: &j.external_id,
-                        title: trimmed_title,
-                        location: trimmed_loc.filter(|s| !s.is_empty()),
-                        department: trimmed_dept.filter(|s| !s.is_empty()),
-                        apply_url: &j.apply_url,
-                        description: trimmed_desc.filter(|s| !s.is_empty()),
-                        remote: j.remote,
-                        posted_at: j.posted_at.as_deref(),
-                        raw_json: &j.raw_json,
-                    });
-                    match res {
-                        Ok((_, is_new)) => {
-                            report.jobs_seen += 1;
-                            if is_new {
-                                report.jobs_new += 1;
-                                new_here += 1;
-                            }
-                        }
-                        Err(e) => warn!(error = %e, slug = %slug, "job upsert failed"),
-                    }
-                }
-                let closed = db
-                    .mark_unseen_jobs_closed(company_id, adapter.kind(), &started)
-                    .unwrap_or(0);
-                report.jobs_closed += closed as u64;
-                info!(
-                    company = %name,
-                    slug = %slug,
-                    jobs = jobs.len(),
-                    new = new_here,
-                    closed,
-                    "synced"
-                );
-            }
-            Err(e) => {
-                if e.to_string().contains("404") {
-                    report.companies_404 += 1;
-                    warn!(slug = %slug, "ATS returned 404; slug may be stale");
-                } else {
-                    warn!(error = %e, slug = %slug, "fetch failed");
-                }
-            }
-        }
+        let r = sync_one_slug(db, adapter, company_id, &name, &slug).await?;
+        report.companies_synced += r.companies_synced;
+        report.companies_404 += r.companies_404;
+        report.jobs_seen += r.jobs_seen;
+        report.jobs_new += r.jobs_new;
+        report.jobs_closed += r.jobs_closed;
     }
     Ok(report)
 }

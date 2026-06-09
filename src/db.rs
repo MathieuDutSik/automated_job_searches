@@ -130,6 +130,18 @@ pub struct CompanyWithJobs {
     pub jobs: Vec<JobSummary>,
 }
 
+/// One row returned by `find_companies_by_slug`. Used by `ajs mark`'s
+/// `company:` selector to resolve a slug → company_id; the kind/slug
+/// fields are reported back in messages so the caller can re-run with a
+/// kind-qualified selector to disambiguate when multiple matches exist.
+#[derive(Debug, Clone)]
+pub struct CompanyMatch {
+    pub id: i64,
+    pub name: String,
+    pub kind: String,
+    pub slug: String,
+}
+
 pub struct JobUpsert<'a> {
     pub company_id: i64,
     pub kind: AtsKind,
@@ -473,6 +485,62 @@ impl Db {
             anyhow::bail!("no job with id {id}");
         }
         Ok(())
+    }
+
+    /// Bulk-update `status` (+ `status_note`) on every open job belonging to
+    /// `company_id`. Closed jobs are intentionally left alone — they don't
+    /// show up in `list jobs` anyway, and dismissing them would muddy the
+    /// historical record. Returns the number of rows updated.
+    pub fn set_status_for_company(
+        &self,
+        company_id: i64,
+        status: &str,
+        note: Option<&str>,
+    ) -> Result<usize> {
+        if !matches!(status, "new" | "applied" | "dismissed") {
+            anyhow::bail!("invalid status '{status}' (expected new|applied|dismissed)");
+        }
+        let now = Utc::now().to_rfc3339();
+        let n = self.conn.execute(
+            "UPDATE jobs SET status = ?, status_changed_at = ?, status_note = ?
+             WHERE company_id = ? AND closed_at IS NULL",
+            params![status, now, note, company_id],
+        )?;
+        Ok(n)
+    }
+
+    /// Look up a company by slug, optionally narrowing by ATS kind. Returns
+    /// every match. Caller decides what to do with 0 / N>1 results —
+    /// e.g. `ajs mark company:slug` errors on ambiguity so the user can
+    /// re-run with `company:kind/slug`.
+    pub fn find_companies_by_slug(
+        &self,
+        slug: &str,
+        kind_filter: Option<&str>,
+    ) -> Result<Vec<CompanyMatch>> {
+        let mut sql = String::from(
+            "SELECT id, name, ats_kind, ats_slug FROM companies WHERE ats_slug = ?",
+        );
+        if kind_filter.is_some() {
+            sql.push_str(" AND ats_kind = ?");
+        }
+        let mut stmt = self.conn.prepare(&sql)?;
+        let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<CompanyMatch> {
+            Ok(CompanyMatch {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                kind: r.get(2)?,
+                slug: r.get(3)?,
+            })
+        };
+        let rows: Vec<CompanyMatch> = if let Some(kind) = kind_filter {
+            stmt.query_map(params![slug, kind], map_row)?
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(params![slug], map_row)?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        Ok(rows)
     }
 
     pub fn list_jobs(&self, limit: usize) -> Result<Vec<(String, String, String, String)>> {

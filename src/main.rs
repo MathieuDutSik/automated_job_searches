@@ -36,7 +36,7 @@ enum Cmd {
     /// Iterates over every company in the DB matching the given ATS kind.
     /// Use "all" to run every registered adapter.
     Sync {
-        /// ATS name (greenhouse | ashby | lever | smartrecruiters | bamboohr |
+        /// ATS name (greenhouse | ashbyhq | lever | smartrecruiters | bamboohr |
         /// recruitee | workday), or "all"
         name: String,
     },
@@ -52,7 +52,7 @@ enum Cmd {
     ///   exa       — needs EXA_SECRET_KEY                         (neural; site: auto-converted)
     ///   firecrawl — needs FIRECRAWL_DEV_API_KEY                  (Google via firecrawl.dev)
     Discover {
-        /// ATS name to discover for (greenhouse | ashby | lever |
+        /// ATS name to discover for (greenhouse | ashbyhq | lever |
         /// smartrecruiters | bamboohr | recruitee | workday), or "all"
         name: String,
         /// Search engine backend to use.
@@ -81,15 +81,27 @@ enum Cmd {
     },
     /// Print the database location and quick stats
     Status,
-    /// Tag a job with a personal status: `applied`, `dismissed`, or `reset`
-    /// (clears back to `new`). The id is the integer in the first column of
-    /// `list jobs` output — the SQLite primary key, not the apply URL.
+    /// Tag a job (or several) with a personal status: `applied`,
+    /// `dismissed`, or `reset` (clears back to `new`). Ids are the integers
+    /// in the first column of `list jobs` output — SQLite primary keys, not
+    /// apply URLs.
+    ///
+    /// The selector can be one id, a comma-separated list of ids, or a
+    /// company specifier prefixed with `company:` to mark every open job
+    /// of that company in one shot. The note (if any) applies to all
+    /// affected rows.
+    ///
+    ///   ajs mark 13105 dismissed
+    ///   ajs mark 13105,13090,13091 dismissed --note "stack mismatch"
+    ///   ajs mark company:parity dismissed
+    ///   ajs mark company:greenhouse/parity dismissed   # disambiguate kind
     Mark {
-        /// SQLite `jobs.id` — first column of `list jobs` output. NOT the URL.
-        id: i64,
+        /// One id, comma-separated id list, or `company:[kind/]slug`.
+        selector: String,
         /// `applied` | `dismissed` | `reset`
         status: String,
-        /// Optional note (e.g. why dismissed, who referred, link to thread)
+        /// Optional note (e.g. why dismissed, who referred, link to thread).
+        /// Applied to every affected row.
         #[arg(long)]
         note: Option<String>,
     },
@@ -349,6 +361,10 @@ async fn main() -> Result<()> {
             let mut imported_new = 0u64;
             let mut already_known = 0u64;
             let mut skipped = 0u64;
+            // (kind, company_id, slug) for each newly-inserted company — used
+            // below to auto-sync only those, instead of every company of that
+            // kind in the DB.
+            let mut fresh: Vec<(ats::AtsKind, i64, String)> = Vec::new();
             for raw in &urls {
                 let url = raw.trim();
                 if url.is_empty() || url.starts_with('#') {
@@ -360,9 +376,10 @@ async fn main() -> Result<()> {
                     continue;
                 };
                 match db.upsert_company(None, refr.kind, &refr.slug, "import:manual", Some(url)) {
-                    Ok((_, is_new)) => {
+                    Ok((company_id, is_new)) => {
                         if is_new {
                             imported_new += 1;
+                            fresh.push((refr.kind, company_id, refr.slug.clone()));
                             info!(kind = refr.kind.as_str(), slug = %refr.slug, url, "imported");
                         } else {
                             already_known += 1;
@@ -379,13 +396,57 @@ async fn main() -> Result<()> {
             println!(
                 "imported {imported_new} new, {already_known} already known, {skipped} skipped"
             );
-            if imported_new > 0 {
+
+            // Auto-sync the newly imported companies — only those, not every
+            // company sharing the same ATS kind. Group by kind so we build
+            // each adapter at most once.
+            if !fresh.is_empty() {
+                use std::collections::BTreeMap;
+                let mut by_kind: BTreeMap<&'static str, Vec<(i64, String)>> = BTreeMap::new();
+                for (kind, id, slug) in fresh {
+                    by_kind.entry(kind.as_str()).or_default().push((id, slug));
+                }
+                let mut total_jobs_new = 0u64;
+                let mut total_synced = 0u64;
+                let mut skipped_no_adapter: Vec<&'static str> = Vec::new();
+                for (kind_name, slugs) in by_kind {
+                    let Some(adapter) = adapters::by_name(kind_name) else {
+                        skipped_no_adapter.push(kind_name);
+                        continue;
+                    };
+                    for (idx, (company_id, slug)) in slugs.into_iter().enumerate() {
+                        if idx > 0 {
+                            tokio::time::sleep(adapters::POLITENESS_DELAY).await;
+                        }
+                        match adapters::sync_one_slug(
+                            &db,
+                            adapter.as_ref(),
+                            company_id,
+                            &slug,
+                            &slug,
+                        )
+                        .await
+                        {
+                            Ok(r) => {
+                                total_synced += r.companies_synced;
+                                total_jobs_new += r.jobs_new;
+                            }
+                            Err(e) => tracing::warn!(error = %e, slug, "auto-sync failed"),
+                        }
+                    }
+                }
                 println!(
-                    "Run `ajs sync all` (or `ajs sync <ats>`) to pull jobs for the new companies."
+                    "auto-synced {total_synced} new compan{plural}, {total_jobs_new} jobs pulled",
+                    plural = if total_synced == 1 { "y" } else { "ies" }
                 );
+                for kind in skipped_no_adapter {
+                    println!(
+                        "  note: no adapter for `{kind}` yet — companies stored but not synced"
+                    );
+                }
             }
         }
-        Cmd::Mark { id, status, note } => {
+        Cmd::Mark { selector, status, note } => {
             let canonical = match status.as_str() {
                 "reset" | "new" => "new",
                 "applied" => "applied",
@@ -394,8 +455,69 @@ async fn main() -> Result<()> {
                     "unknown status '{other}' (expected: applied | dismissed | reset)"
                 ),
             };
-            db.set_status(id, canonical, note.as_deref())?;
-            println!("job {id}: {canonical}");
+            if let Some(spec) = selector.strip_prefix("company:") {
+                let (kind_filter, slug) = match spec.split_once('/') {
+                    Some((k, s)) => (Some(k), s),
+                    None => (None, spec),
+                };
+                if slug.is_empty() {
+                    anyhow::bail!("empty slug in `company:` selector");
+                }
+                let matches = db.find_companies_by_slug(slug, kind_filter)?;
+                let c = match matches.as_slice() {
+                    [] => anyhow::bail!(
+                        "no company matches `{selector}`. Check the slug with `ajs list companies`."
+                    ),
+                    [only] => only,
+                    many => {
+                        let kinds: Vec<String> =
+                            many.iter().map(|m| format!("{}:{}", m.kind, m.slug)).collect();
+                        anyhow::bail!(
+                            "slug `{slug}` is ambiguous across {} kinds — re-run with `company:kind/slug`. Matches: {}",
+                            many.len(),
+                            kinds.join(", ")
+                        );
+                    }
+                };
+                let n = db.set_status_for_company(c.id, canonical, note.as_deref())?;
+                println!(
+                    "marked {n} open job{plural} of {name} ({kind}:{slug}) as {canonical}",
+                    plural = if n == 1 { "" } else { "s" },
+                    name = c.name,
+                    kind = c.kind,
+                    slug = c.slug,
+                );
+            } else {
+                let parsed: Vec<i64> = selector
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| {
+                        s.parse::<i64>()
+                            .map_err(|_| anyhow::anyhow!("not a valid id: '{s}'"))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                if parsed.is_empty() {
+                    anyhow::bail!("no ids given");
+                }
+                let mut ok = 0usize;
+                let mut failed = 0usize;
+                for id in &parsed {
+                    match db.set_status(*id, canonical, note.as_deref()) {
+                        Ok(()) => {
+                            ok += 1;
+                            println!("job {id}: {canonical}");
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            eprintln!("job {id}: failed — {e}");
+                        }
+                    }
+                }
+                if parsed.len() > 1 {
+                    println!("marked {ok}/{} ({failed} failed)", parsed.len());
+                }
+            }
         }
     }
     Ok(())

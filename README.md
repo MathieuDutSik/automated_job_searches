@@ -31,8 +31,8 @@ ajs crawl all                     # every registered crawler
 # Phase 1b: discover companies via web-search queries
 ajs discover <ats>                          # one ATS, default engine (brave)
 ajs discover all                            # every ATS plan, default engine
-ajs discover ashby --engine google          # use Google CSE for this run
-ajs discover ashby --engine tavily          # cross-check with a different index
+ajs discover ashbyhq --engine google        # use Google CSE for this run
+ajs discover ashbyhq --engine tavily        # cross-check with a different index
 #
 # Engines and the env vars they need (see SOURCES.md for details):
 #   brave     → BRAVE_API_KEY                                (default; 2k q/mo free)
@@ -46,9 +46,11 @@ ajs discover ashby --engine tavily          # cross-check with a different index
 ajs import https://boards.greenhouse.io/parity/jobs/4567   # one URL
 ajs import < urls.txt                                       # one URL per line
 pbpaste | ajs import                                        # paste from clipboard
-# Each URL → classified → company upserted → next `sync` pulls all its jobs.
-# Unrecognized URLs are skipped with a warning; lines starting with `#` and
-# blank lines are ignored.
+# Each URL → classified → company upserted. Companies that are newly added
+# are ALSO synced immediately (only those — already-known companies are not
+# re-fetched), so you go from URL to "all jobs from that company in the DB"
+# in one command. Unrecognized URLs are skipped with a warning; lines
+# starting with `#` and blank lines are ignored.
 
 # Phase 2: refresh full job lists from the ATS JSON APIs
 ajs sync <ats>                    # one ATS (iterates every company of that kind)
@@ -69,11 +71,14 @@ ajs list jobs --remote --match 'rust OR zig'    # boolean operators work
 ajs list jobs --match '"c++"'                   # quote terms with punctuation
 
 # Per-user job status (your own pipeline state, separate from ATS open/closed)
-ajs mark 4130 applied --note "via referral"     # tag applied
-ajs mark 3154 dismissed --note "stack mismatch" # hide from default listings
-ajs mark 4130 reset                             # back to `new`
-ajs list jobs --applied                         # only your applied rows
-ajs list jobs --all                             # include `dismissed` again
+ajs mark 4130 applied --note "via referral"        # tag applied
+ajs mark 3154 dismissed --note "stack mismatch"    # hide from default listings
+ajs mark 13105,13090,13091 dismissed               # batch — comma-separated ids
+ajs mark company:livekit dismissed                 # every open job of one company
+ajs mark company:ashbyhq/livekit dismissed         # disambiguate when slug is reused
+ajs mark 4130 reset                                # back to `new`
+ajs list jobs --applied                            # only your applied rows
+ajs list jobs --all                                # include `dismissed` again
 ```
 
 The typical workflow is `crawl all` (and/or `discover all`) once to

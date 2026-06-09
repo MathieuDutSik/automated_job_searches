@@ -233,8 +233,8 @@ needs the `start` query parameter and a loop — not wired today.
 - **`--engine serper`** only on the paid tier — the free tier rejects
   every `site:`-bearing query (HTTP 400).
 
-Engines are independent — running `discover ashby --engine brave` then
-`discover ashby --engine tavily` will surface a wider company set than
+Engines are independent — running `discover ashbyhq --engine brave` then
+`discover ashbyhq --engine tavily` will surface a wider company set than
 either alone, since each `upsert_company` is idempotent on
 `(ats_kind, ats_slug)`.
 
