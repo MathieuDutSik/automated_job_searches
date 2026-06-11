@@ -18,8 +18,8 @@ struct AshbyJob {
     department_name: Option<String>,
     #[serde(default, rename = "jobUrl")]
     job_url: Option<String>,
-    #[serde(default, rename = "publishedDate")]
-    published_date: Option<String>,
+    #[serde(default, rename = "publishedAt")]
+    published_at: Option<String>,
     #[serde(default, rename = "isRemote")]
     is_remote: Option<bool>,
     #[serde(default, rename = "descriptionPlain")]
@@ -64,7 +64,7 @@ impl AtsAdapter for Ashby {
                 apply_url,
                 description: j.description_plain,
                 remote: j.is_remote,
-                posted_at: j.published_date,
+                posted_at: j.published_at,
                 raw_json,
             });
         }

@@ -111,6 +111,7 @@ pub struct JobListing {
     pub apply_url: String,
     pub remote: Option<bool>,
     pub status: String,
+    pub posted_at: Option<String>,
 }
 
 /// Compact job tuple shown under a company in `ajs list by-company`.
@@ -423,7 +424,7 @@ impl Db {
         status: StatusFilter,
     ) -> Result<Vec<JobListing>> {
         let mut sql = String::from(
-            "SELECT j.id, c.name, j.title, COALESCE(j.location, ''), j.apply_url, j.remote, j.status
+            "SELECT j.id, c.name, j.title, COALESCE(j.location, ''), j.apply_url, j.remote, j.status, j.posted_at
                FROM jobs j JOIN companies c ON c.id = j.company_id",
         );
         if match_query.is_some() {
@@ -458,6 +459,7 @@ impl Db {
                 apply_url: r.get(4)?,
                 remote: r.get::<_, Option<i64>>(5)?.map(|i| i != 0),
                 status: r.get(6)?,
+                posted_at: r.get(7)?,
             })
         };
         let rows: Vec<_> = if let Some(q) = match_query {

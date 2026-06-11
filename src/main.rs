@@ -264,6 +264,7 @@ async fn main() -> Result<()> {
                 };
                 let rows =
                     db.list_jobs_filtered(limit, start, remote, r#match.as_deref(), status_filter)?;
+                let now = chrono::Utc::now();
                 for row in rows {
                     let remote_tag = if row.remote == Some(true) {
                         " [remote]"
@@ -275,8 +276,13 @@ async fn main() -> Result<()> {
                         "dismissed" => " [dismissed]",
                         _ => "",
                     };
+                    let age = row
+                        .posted_at
+                        .as_deref()
+                        .map(|s| format_age(s, now))
+                        .unwrap_or_else(|| "      ?".to_string());
                     println!(
-                        "{id:>6}  {company} | {title}{remote_tag}{status_tag} | {location} | {url}",
+                        "{id:>6}  {age:>7}  {company} | {title}{remote_tag}{status_tag} | {location} | {url}",
                         id = row.id,
                         company = row.company,
                         title = row.title,
@@ -521,4 +527,34 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Render a `posted_at` value as a compact relative age (e.g. `12d`, `3h`,
+/// `4mo`). Tries RFC3339 first (Ashby/Greenhouse/Lever/SmartRecruiters), then
+/// the `YYYY-MM-DD HH:MM:SS UTC` shape Recruitee returns. Falls back to the
+/// raw string with a leading `Posted ` stripped — Workday's `postedOn` is a
+/// human phrase like "Posted 10 Days Ago".
+fn format_age(posted_at: &str, now: chrono::DateTime<chrono::Utc>) -> String {
+    let when = chrono::DateTime::parse_from_rfc3339(posted_at)
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .or_else(|_| {
+            chrono::NaiveDateTime::parse_from_str(posted_at, "%Y-%m-%d %H:%M:%S UTC")
+                .map(|d| d.and_utc())
+        });
+    let Ok(when) = when else {
+        return posted_at.trim_start_matches("Posted ").to_string();
+    };
+    let delta = now.signed_duration_since(when);
+    let secs = delta.num_seconds().max(0);
+    if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h", secs / 3600)
+    } else if secs < 60 * 86_400 {
+        format!("{}d", secs / 86_400)
+    } else if secs < 365 * 86_400 {
+        format!("{}mo", secs / (30 * 86_400))
+    } else {
+        format!("{}y", secs / (365 * 86_400))
+    }
 }
