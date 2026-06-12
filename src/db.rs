@@ -442,10 +442,12 @@ impl Db {
         if match_query.is_some() {
             sql.push_str(" AND jobs_fts MATCH ?");
         }
+        // Oldest postings first (newest last). NULL posted_at rows sort to the
+        // very end via the `IS NULL` synthetic key so they don't crowd the top.
         sql.push_str(if match_query.is_some() {
-            " ORDER BY rank LIMIT ? OFFSET ?"
+            " ORDER BY j.posted_at IS NULL, j.posted_at ASC, rank LIMIT ? OFFSET ?"
         } else {
-            " ORDER BY j.last_seen DESC LIMIT ? OFFSET ?"
+            " ORDER BY j.posted_at IS NULL, j.posted_at ASC, j.last_seen DESC LIMIT ? OFFSET ?"
         });
         let limit_param: i64 = limit.map(|n| n as i64).unwrap_or(-1);
         let offset_param: i64 = start as i64;

@@ -529,11 +529,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Render a `posted_at` value as a compact relative age (e.g. `12d`, `3h`,
-/// `4mo`). Tries RFC3339 first (Ashby/Greenhouse/Lever/SmartRecruiters), then
-/// the `YYYY-MM-DD HH:MM:SS UTC` shape Recruitee returns. Falls back to the
-/// raw string with a leading `Posted ` stripped — Workday's `postedOn` is a
-/// human phrase like "Posted 10 Days Ago".
+/// Render a `posted_at` value as an age in days (e.g. `12d`). Tries RFC3339
+/// first (Ashby/Greenhouse/Lever/SmartRecruiters), then the
+/// `YYYY-MM-DD HH:MM:SS UTC` shape Recruitee returns. Workday's free-form
+/// `postedOn` (e.g. "Posted 10 Days Ago", "Posted Today", "Posted 30+ Days
+/// Ago") is parsed by phrase. Anything unrecognized falls back to the raw
+/// string with a leading `Posted ` stripped.
 fn format_age(posted_at: &str, now: chrono::DateTime<chrono::Utc>) -> String {
     let when = chrono::DateTime::parse_from_rfc3339(posted_at)
         .map(|d| d.with_timezone(&chrono::Utc))
@@ -541,20 +542,25 @@ fn format_age(posted_at: &str, now: chrono::DateTime<chrono::Utc>) -> String {
             chrono::NaiveDateTime::parse_from_str(posted_at, "%Y-%m-%d %H:%M:%S UTC")
                 .map(|d| d.and_utc())
         });
-    let Ok(when) = when else {
-        return posted_at.trim_start_matches("Posted ").to_string();
-    };
-    let delta = now.signed_duration_since(when);
-    let secs = delta.num_seconds().max(0);
-    if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else if secs < 86_400 {
-        format!("{}h", secs / 3600)
-    } else if secs < 60 * 86_400 {
-        format!("{}d", secs / 86_400)
-    } else if secs < 365 * 86_400 {
-        format!("{}mo", secs / (30 * 86_400))
-    } else {
-        format!("{}y", secs / (365 * 86_400))
+    if let Ok(when) = when {
+        let days = now.signed_duration_since(when).num_days().max(0);
+        return format!("{days}d");
     }
+    let phrase = posted_at.trim_start_matches("Posted ").trim();
+    if phrase.eq_ignore_ascii_case("today") {
+        return "0d".to_string();
+    }
+    if phrase.eq_ignore_ascii_case("yesterday") {
+        return "1d".to_string();
+    }
+    if let Some(rest) = phrase.strip_suffix(" Days Ago").or_else(|| phrase.strip_suffix(" Day Ago")) {
+        // "30+" → ">30d", "10" → "10d"
+        if let Some(n) = rest.strip_suffix('+') {
+            return format!(">{n}d");
+        }
+        if rest.parse::<u32>().is_ok() {
+            return format!("{rest}d");
+        }
+    }
+    phrase.to_string()
 }
