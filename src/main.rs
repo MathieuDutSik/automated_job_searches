@@ -144,6 +144,13 @@ enum ListWhat {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let started = std::time::Instant::now();
+    let result = run().await;
+    eprintln!("runtime = {}", format_runtime(started.elapsed()));
+    result
+}
+
+async fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
@@ -527,6 +534,30 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Format an elapsed `Duration` as e.g. `423ms`, `47s`, `1min 34s`,
+/// `1h 5min 23s`, `2d 3h 12min`. Sub-second values keep millisecond
+/// precision; larger units round to the next-smaller integer unit.
+fn format_runtime(d: std::time::Duration) -> String {
+    let ms = d.as_millis();
+    if ms < 1000 {
+        return format!("{ms}ms");
+    }
+    let total_secs = d.as_secs();
+    let days = total_secs / 86_400;
+    let hours = (total_secs % 86_400) / 3600;
+    let mins = (total_secs % 3600) / 60;
+    let secs = total_secs % 60;
+    if days > 0 {
+        format!("{days}d {hours}h {mins}min")
+    } else if hours > 0 {
+        format!("{hours}h {mins}min {secs}s")
+    } else if mins > 0 {
+        format!("{mins}min {secs}s")
+    } else {
+        format!("{secs}s")
+    }
 }
 
 /// Render a `posted_at` value as an age in days (e.g. `12d`). Tries RFC3339
