@@ -238,6 +238,67 @@ Engines are independent — running `discover ashbyhq --engine brave` then
 either alone, since each `upsert_company` is idempotent on
 `(ats_kind, ats_slug)`.
 
+## Access policy
+
+Rule: `ajs` only uses access a site grants. Grants are a documented
+public API or feed, or a robots.txt that allows the path. A Cloudflare
+or JS challenge, a 403 on a normal request, a login wall or a robots.txt
+`Disallow` counts as a refusal. Refused sources are not worked around
+(no headless browser, no UA spoofing, no proxy rotation); they stay out
+or need an explicit decision recorded here.
+
+Robots verdicts below are from `python3 scripts/check_access.py` run on
+2026-11-01 with the `ajs` user agent. Re-run it before adding a source.
+"Documented" means the site publishes the endpoint for third-party use.
+Terms quoted are what the API itself returns or its docs say; most of
+them are about republishing jobs, which a local database doesn't do,
+but are noted in case that changes.
+
+### In use
+
+| Source | Endpoint | Documented | robots.txt | Status |
+|---|---|---|---|---|
+| cryptocurrencyjobs | `index.xml` RSS + detail pages | RSS feed | allowed | ✅ authorized |
+| cryptojobs | `/jobs/feed` RSS | RSS feed | allowed | ✅ authorized |
+| hn_whoshiring | `hn.algolia.com/api/v1` | yes (HN Search API) | none | ✅ authorized |
+| thehub | `/jobs` + detail pages | no | allowed | ✅ authorized (HTML) |
+| web3career | `/remote-jobs` | no | allowed | ⛔ apply links behind a sign-up wall — parked |
+| workingnomads | `/api/exposed_jobs/` + `/job/go/` redirect | public JSON | allowed (empty `Disallow`) | ✅ authorized |
+| Greenhouse | `boards-api.greenhouse.io/v1/boards` | yes (Job Board API) | allowed | ✅ authorized |
+| Ashby | `api.ashbyhq.com/posting-api/job-board` | yes (public posting API) | robots.txt returns 401 | ✅ authorized (documented) |
+| Lever | `api.lever.co/v0/postings` | yes (Postings API) | allowed, `Crawl-delay: 1` | ✅ authorized — keep ≥ 1 s between calls |
+| SmartRecruiters | `api.smartrecruiters.com/v1/companies/{slug}/postings` | yes (public Posting API) | **`Disallow: /` for `*`; only `LinkedInBot` may fetch `/v1/companies/`** | ⚠️ conflicting — docs grant it, robots.txt refuses; decision needed |
+| BambooHR | `{slug}.bamboohr.com/careers/list` | no (career-site JSON) | allowed | ✅ authorized by robots |
+| Recruitee | `{slug}.recruitee.com/api/offers/` | yes (careers site API) | allowed | ✅ authorized |
+| Workday | `…myworkdayjobs.com/wday/cxs/…/jobs` | no (career-site XHR) | allowed | ✅ authorized by robots |
+| Search engines | Brave, Google CSE, Tavily, Exa, Firecrawl, Serper | yes, keyed APIs | n/a | ✅ authorized within each plan's quota |
+
+### Candidates
+
+| Source | Endpoint | Documented | robots.txt | Status |
+|---|---|---|---|---|
+| Workable | `apply.workable.com/api/v1/widget/accounts/{slug}` | widget API | allowed | ✅ OK to add |
+| Breezy | `{slug}.breezy.hr/json` | public JSON | allowed | ✅ OK to add |
+| Teamtailor | `{slug}.teamtailor.com/jobs.rss` | RSS feed | allowed | ✅ OK to add |
+| JazzHR | `{slug}.applytojob.com/apply/jobs` | no (HTML) | allowed | ✅ OK by robots (HTML scrape) |
+| Personio | `{slug}.jobs.personio.de/xml` | yes (XML feed) | allowed | ✅ OK to add (known slug 404s — stale) |
+| Rippling | `api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` | not verified | none | ✅ OK by convention |
+| Gem | `api.gem.com/job_board/v0/{slug}/job_posts/` | not verified | robots.txt returns 403 | ❓ unknown — check docs first |
+| `grnh.se` | Greenhouse short-link redirect | — | allowed | ✅ OK to follow |
+| Himalayas | `himalayas.app/jobs/api` (cursor-paged) | yes | allowed (API and job pages) | ✅ OK to add |
+| Remote OK | `remoteok.com/api` | yes | allowed, `Crawl-delay: 1`, `Content-Signal: search=yes, ai-train=no` | ✅ OK — terms: link back and credit Remote OK if shown publicly |
+| We Work Remotely | `/remote-jobs.rss` + job pages | RSS feed | allowed | ✅ OK to add |
+| Jobicy | `jobicy.com/api/v2/remote-jobs` | yes | allowed | ✅ OK — terms: credit Jobicy, link to original job URL |
+| Arbeitnow | `/api/job-board-api` | yes | allowed | ✅ OK (low remote yield) |
+| Remotive | `remotive.com/api/remote-jobs` | yes, with terms | **`Disallow: /api/*`** | ⚠️ conflicting — API terms grant use (max ~4 calls/day, credit Remotive, don't resubmit to other boards); robots.txt refuses |
+| Common Crawl | `index.commoncrawl.org` CDX API | yes (open data) | unreachable (index overloaded) | ✅ open data — CDX timed out; bulk index files are the fallback |
+| Work at a Startup, Wellfound, Dover, Getro boards | various | no | allowed | ❓ not probed beyond robots.txt |
+
+The anti-bot sites in the rejected table below (`startup.jobs`,
+`trueup.io`, `eu-startups.com`, `globallogic.com`, `rustjobs.dev`,
+`remote100k.com`, `euremotejobs.com`) are **refused** even where their
+robots.txt allows the path: a challenge page is the site saying no.
+
 ## Candidates evaluated and rejected
 
 Aggregators that were triaged and **not** added, with the reason:
@@ -276,6 +337,6 @@ Three rough patterns to watch for:
 
 1. **More crawlers** — `weworkremotely.com`, `remote.co`, `jobspresso.co`,
    getro VC-portfolio boards.
-2. **Auth-walled sources** — cookie-paste support for `web3.career`;
-   revisit `rustjobs.dev` (Vercel JS challenge) with a headless browser if
-   it ever looks worth it.
+2. **Auth-walled sources** — cookie-paste support for `web3.career`
+   (your own login; check its terms first). `rustjobs.dev` stays out
+   while it serves a JS challenge — see [Access policy](#access-policy).
