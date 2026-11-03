@@ -57,9 +57,21 @@ under `workingnomads.com`. Description, location, tags, and remote flag
 (inferred from location / tags containing `remote` / `anywhere` /
 `worldwide`) are all preserved. ~42 jobs/run, nearly all remote.
 
+### `workable`
+
+Workable's cross-company job board, `jobs.workable.com`. Reads
+`/sitemap.xml` (~2,150 `/search/{country}/{query}` landing pages) and
+visits only the ~650 `remote-*` ones, one page per second. Each page
+embeds its first ~20 jobs as JSON (`window.jobBoard.initialState`,
+key `api/v1/jobs`) with title, full description, locations
+(`TELECOMMUTE` = remote), `workplace` and company. Jobs are stored
+directly; companies land under `jobs/{id}` slugs (see the Workable
+adapter). A 429 gets the same back-off as the adapter's. robots.txt disallows query strings on `/search`, so page 2+
+of each search is never fetched.
+
 ## ATS adapters
 
-Wired for seven ATSes. Each sync populates the plain-text description
+Wired for eight ATSes. Each sync populates the plain-text description
 (when the ATS exposes one in the listing API), the structured `remote`
 flag, and the per-job raw JSON.
 
@@ -96,13 +108,29 @@ flag, and the per-job raw JSON.
   `locationsText` (`Remote` / `Anywhere`). **No description in the
   listing endpoint** — Workday has a separate per-job POST that the
   adapter doesn't call yet.
+- **Workable** — two company namespaces that don't map to each other:
+  - account slug (`apply.workable.com/{slug}`, e.g. `modash`) →
+    `https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true`,
+    full job list in one call, `telecommuting` → `remote`, HTML
+    description;
+  - job-board id, stored as `jobs/{id}` (from
+    `jobs.workable.com/company/{id}/…`) → the company page, whose
+    embedded JSON (key `api/v1/companies/{id}`) carries its first 20
+    jobs. When `totalSize` is larger, pagination isn't followed and the
+    list is reported as partial, so sync leaves the jobs it didn't see
+    open instead of closing them. These pages go out one every ~2 s:
+    at one per second Workable answered 429 after ~340 pages. A 429 is
+    honoured (`Retry-After`, else 60 s), with at most two retries.
+  A company found both ways is stored twice, with different job ids.
+  The `apply.workable.com/j/{code}` short link names no account and is
+  not classified.
 
 The catch-all `AtsKind::Other` covers anything not matching a known ATS —
 company careers pages, sub-aggregators (`jobs.solana.com`, EU Greenhouse
 mirrors, ...). These aren't dropped; they're stored with the URL host as
 slug so they still appear in `list jobs`.
 
-Pending adapters (see [DESIGN.md](DESIGN.md) roadmap): Workable, Breezy,
+Pending adapters (see [DESIGN.md](DESIGN.md) roadmap): Breezy,
 Personio, JazzHR, Teamtailor, Pinpoint, Comeet.
 
 ## Search-engine discovery (`ajs discover`)
@@ -262,6 +290,7 @@ but are noted in case that changes.
 | cryptojobs | `/jobs/feed` RSS | RSS feed | allowed | ✅ authorized |
 | hn_whoshiring | `hn.algolia.com/api/v1` | yes (HN Search API) | none | ✅ authorized |
 | thehub | `/jobs` + detail pages | no | allowed | ✅ authorized (HTML) |
+| workable (crawler) | `jobs.workable.com/sitemap.xml` + `/search/*` pages | sitemap listed in robots.txt | `/search/*` allowed, `/search*?*` disallowed | ✅ authorized — no query strings, so no pagination |
 | web3career | `/remote-jobs` | no | allowed | ⛔ apply links behind a sign-up wall — parked |
 | workingnomads | `/api/exposed_jobs/` + `/job/go/` redirect | public JSON | allowed (empty `Disallow`) | ✅ authorized |
 | Greenhouse | `boards-api.greenhouse.io/v1/boards` | yes (Job Board API) | allowed | ✅ authorized |
@@ -271,13 +300,13 @@ but are noted in case that changes.
 | BambooHR | `{slug}.bamboohr.com/careers/list` | no (career-site JSON) | allowed | ✅ authorized by robots |
 | Recruitee | `{slug}.recruitee.com/api/offers/` | yes (careers site API) | allowed | ✅ authorized |
 | Workday | `…myworkdayjobs.com/wday/cxs/…/jobs` | no (career-site XHR) | allowed | ✅ authorized by robots |
+| Workable | `apply.workable.com/api/v1/widget/accounts/{slug}`; `jobs.workable.com/company/{id}` | widget API; HTML company page | allowed | ✅ authorized |
 | Search engines | Brave, Google CSE, Tavily, Exa, Firecrawl, Serper | yes, keyed APIs | n/a | ✅ authorized within each plan's quota |
 
 ### Candidates
 
 | Source | Endpoint | Documented | robots.txt | Status |
 |---|---|---|---|---|
-| Workable | `apply.workable.com/api/v1/widget/accounts/{slug}` | widget API | allowed | ✅ OK to add |
 | Breezy | `{slug}.breezy.hr/json` | public JSON | allowed | ✅ OK to add |
 | Teamtailor | `{slug}.teamtailor.com/jobs.rss` | RSS feed | allowed | ✅ OK to add |
 | JazzHR | `{slug}.applytojob.com/apply/jobs` | no (HTML) | allowed | ✅ OK by robots (HTML scrape) |
@@ -293,6 +322,8 @@ but are noted in case that changes.
 | Remotive | `remotive.com/api/remote-jobs` | yes, with terms | **`Disallow: /api/*`** | ⚠️ conflicting — API terms grant use (max ~4 calls/day, credit Remotive, don't resubmit to other boards); robots.txt refuses |
 | Common Crawl | `index.commoncrawl.org` CDX API | yes (open data) | unreachable (index overloaded) | ✅ open data — CDX timed out; bulk index files are the fallback |
 | Work at a Startup, Wellfound, Dover, Getro boards | various | no | allowed | ❓ not probed beyond robots.txt |
+| MyGreenhouse | `my.greenhouse.io/jobs/search` (cross-company search) | no | allowed | ⛔ redirects to sign-in — refused |
+| Ashby, Greenhouse, Lever, SmartRecruiters company lists | `sitemap.xml` on the job-board hosts | — | — | none exist (404 on 2026-11-02); companies must be found elsewhere |
 
 The anti-bot sites in the rejected table below (`startup.jobs`,
 `trueup.io`, `eu-startups.com`, `globallogic.com`, `rustjobs.dev`,

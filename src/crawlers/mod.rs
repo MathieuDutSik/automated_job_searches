@@ -8,6 +8,7 @@ pub mod cryptojobs;
 pub mod hn_whoshiring;
 pub mod thehub;
 pub mod web3career;
+pub mod workable;
 pub mod workingnomads;
 
 #[derive(Debug, Default)]
@@ -39,6 +40,7 @@ pub fn all() -> Vec<Box<dyn Crawler>> {
         Box::new(hn_whoshiring::HnWhosHiring),
         Box::new(thehub::TheHub),
         Box::new(web3career::Web3Career),
+        Box::new(workable::WorkableBoard),
         Box::new(workingnomads::WorkingNomads),
     ]
 }

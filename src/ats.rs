@@ -99,9 +99,22 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
         });
     }
 
-    // apply.workable.com/{slug}[/j/{id}] OR {slug}.workable.com
-    if host == "apply.workable.com" || host == "jobs.workable.com" {
-        let slug = segs.first()?.to_string();
+    // jobs.workable.com/company/{id}/... — the cross-company job board has
+    // its own company ids; see adapters::workable for the `jobs/` prefix.
+    // Its /view/ and /search/ pages don't name a company.
+    if host == "jobs.workable.com" {
+        let id = crate::adapters::workable::board_company_id(raw)?;
+        return Some(AtsRef {
+            kind: AtsKind::Workable,
+            slug: format!("{}{id}", crate::adapters::workable::BOARD_SLUG_PREFIX),
+            external_id: None,
+        });
+    }
+
+    // apply.workable.com/{slug}[/j/{id}] OR {slug}.workable.com. The
+    // apply.workable.com/j/{id} short link doesn't name the account.
+    if host == "apply.workable.com" {
+        let slug = segs.first().filter(|s| **s != "j")?.to_string();
         let external_id = segs
             .iter()
             .position(|s| *s == "j")
@@ -404,6 +417,20 @@ mod tests {
         assert_eq!(r.kind, AtsKind::Workable);
         assert_eq!(r.slug, "circle");
         assert_eq!(r.external_id.as_deref(), Some("ABC123"));
+    }
+
+    #[test]
+    fn workable_short_link_has_no_account() {
+        assert!(classify_apply_url("https://apply.workable.com/j/CD50BEE8FE").is_none());
+    }
+
+    #[test]
+    fn workable_job_board() {
+        let r = classify_apply_url("https://jobs.workable.com/company/dVhhXmeQ/jobs-at-smeetz")
+            .unwrap();
+        assert_eq!(r.kind, AtsKind::Workable);
+        assert_eq!(r.slug, "jobs/dVhhXmeQ");
+        assert!(classify_apply_url("https://jobs.workable.com/view/abc/rust-engineer").is_none());
     }
 
     #[test]

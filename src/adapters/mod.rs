@@ -12,6 +12,7 @@ pub mod greenhouse;
 pub mod lever;
 pub mod recruitee;
 pub mod smartrecruiters;
+pub mod workable;
 pub mod workday;
 
 pub const POLITENESS_DELAY: Duration = Duration::from_millis(250);
@@ -28,10 +29,27 @@ pub struct AdapterJob {
     pub raw_json: String,
 }
 
+/// A company's job list as fetched. `complete` is false when the source
+/// only showed part of the list; sync then leaves unseen jobs open rather
+/// than marking them closed.
+pub struct FetchedJobs {
+    pub jobs: Vec<AdapterJob>,
+    pub complete: bool,
+}
+
 #[async_trait(?Send)]
 pub trait AtsAdapter {
     fn kind(&self) -> AtsKind;
     async fn fetch_jobs(&self, slug: &str) -> Result<Vec<AdapterJob>>;
+
+    /// Like `fetch_jobs`, but says whether the list is complete. Adapters
+    /// whose source can truncate override this.
+    async fn fetch(&self, slug: &str) -> Result<FetchedJobs> {
+        Ok(FetchedJobs {
+            jobs: self.fetch_jobs(slug).await?,
+            complete: true,
+        })
+    }
 }
 
 #[derive(Debug, Default)]
@@ -53,6 +71,7 @@ pub fn all() -> Vec<Box<dyn AtsAdapter>> {
         Box::new(bamboohr::BambooHr),
         Box::new(recruitee::Recruitee),
         Box::new(workday::Workday),
+        Box::new(workable::Workable),
     ]
 }
 
@@ -76,8 +95,8 @@ pub async fn sync_one_slug(
         ..Default::default()
     };
     let started = chrono::Utc::now().to_rfc3339();
-    match adapter.fetch_jobs(slug).await {
-        Ok(jobs) => {
+    match adapter.fetch(slug).await {
+        Ok(FetchedJobs { jobs, complete }) => {
             report.companies_synced = 1;
             let mut new_here = 0u64;
             for j in &jobs {
@@ -109,9 +128,12 @@ pub async fn sync_one_slug(
                     Err(e) => warn!(error = %e, slug, "job upsert failed"),
                 }
             }
-            let closed = db
-                .mark_unseen_jobs_closed(company_id, adapter.kind(), &started)
-                .unwrap_or(0);
+            let closed = if complete {
+                db.mark_unseen_jobs_closed(company_id, adapter.kind(), &started)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
             report.jobs_closed = closed as u64;
             info!(
                 company = %display_name,

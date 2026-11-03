@@ -122,6 +122,10 @@ still show up in `list jobs`.
 pub trait AtsAdapter {
     fn kind(&self) -> AtsKind;
     async fn fetch_jobs(&self, slug: &str) -> Result<Vec<AdapterJob>>;
+    // Default: fetch_jobs, marked complete. Override when the source can
+    // show only part of a company's list (Workable job-board pages); a
+    // partial list makes sync skip closing the jobs it didn't see.
+    async fn fetch(&self, slug: &str) -> Result<FetchedJobs>;
 }
 ```
 
@@ -223,12 +227,16 @@ If a Workday URL lacks a site segment (bare tenant root, e.g.
 `tenant`) from before this scheme will fail at sync time with a clear error
 and can be removed from the DB.
 
+- **Workable** job-board companies: `jobs/{id}` — the id from
+  `jobs.workable.com/company/{id}/…`. Account slugs (`modash`) have no
+  `/`, so the prefix tells the adapter which endpoint to call.
+
 All other ATSes use a flat single-token slug.
 
 ## Roadmap
 
-1. **More ATS adapters** — Workable, Breezy, Personio, JazzHR, Teamtailor,
-   Pinpoint, Comeet. Same pattern as the existing seven; each is ~50-80
+1. **More ATS adapters** — Breezy, Personio, JazzHR, Teamtailor,
+   Pinpoint, Comeet. Same pattern as the existing eight; each is ~50-80
    lines.
 2. **Descriptions for SmartRecruiters / BambooHR / Workday** — these three
    only expose summary data in the listing API; a separate per-posting
