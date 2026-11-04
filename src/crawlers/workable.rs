@@ -4,7 +4,9 @@ use regex::Regex;
 use std::time::Duration;
 use tracing::{info, warn};
 
-use crate::adapters::workable::{get_board_page, initial_state, parse_board_jobs, state_data, BoardJob};
+use crate::adapters::workable::{
+    get_board_page, initial_state, parse_board_jobs, state_data, BoardJob,
+};
 use crate::ats::AtsKind;
 use crate::crawlers::{CrawlReport, Crawler};
 use crate::db::{Db, JobUpsert};
@@ -34,7 +36,11 @@ impl Crawler for WorkableBoard {
     async fn run(&self, db: &Db) -> Result<CrawlReport> {
         let client = http::client()?;
         info!(url = SITEMAP_URL, "fetching sitemap");
-        let resp = client.get(SITEMAP_URL).send().await.context("GET workable sitemap")?;
+        let resp = client
+            .get(SITEMAP_URL)
+            .send()
+            .await
+            .context("GET workable sitemap")?;
         let status = resp.status();
         let mut report = CrawlReport {
             source: SOURCE,

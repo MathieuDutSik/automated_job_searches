@@ -66,6 +66,14 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
     items_new    INTEGER,
     error        TEXT
 );
+
+-- One row per `ajs resolve` attempt on an `other` company. `result` is
+-- the `kind/slug` it resolved to, or NULL when no known ATS was found.
+CREATE TABLE IF NOT EXISTS resolve_attempts (
+    company_id   INTEGER PRIMARY KEY REFERENCES companies(id),
+    attempted_at TEXT NOT NULL,
+    result       TEXT
+);
 "#;
 
 const SCHEMA_DERIVED: &str = r#"
@@ -303,6 +311,48 @@ impl Db {
             params![now, company_id, kind.as_str(), sync_started],
         )?;
         Ok(n)
+    }
+
+    /// `other` companies (id, name, host slug) to try in `ajs resolve`, with every URL we hold
+    /// for them (job apply URLs and discovery source URLs). Companies
+    /// already attempted are left out unless `include_attempted`.
+    pub fn list_unresolved_others(
+        &self,
+        include_attempted: bool,
+    ) -> Result<Vec<(i64, String, String, Vec<String>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.name, c.ats_slug, \
+                    (SELECT GROUP_CONCAT(u, char(10)) FROM ( \
+                        SELECT apply_url AS u FROM jobs WHERE company_id = c.id \
+                        UNION SELECT source_url FROM company_discoveries \
+                              WHERE company_id = c.id AND source_url IS NOT NULL)) \
+             FROM companies c \
+             WHERE c.ats_kind = 'other' \
+               AND (?1 OR c.id NOT IN (SELECT company_id FROM resolve_attempts)) \
+             ORDER BY c.ats_slug",
+        )?;
+        let rows = stmt
+            .query_map(params![include_attempted], |r| {
+                let urls: Option<String> = r.get(3)?;
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    urls.map(|u| u.lines().map(str::to_string).collect())
+                        .unwrap_or_default(),
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn record_resolve_attempt(&self, company_id: i64, result: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO resolve_attempts (company_id, attempted_at, result) VALUES (?, ?, ?) \
+             ON CONFLICT(company_id) DO UPDATE SET attempted_at = excluded.attempted_at, result = excluded.result",
+            params![company_id, Utc::now().to_rfc3339(), result],
+        )?;
+        Ok(())
     }
 
     pub fn list_slugs_for_kind(&self, kind: AtsKind) -> Result<Vec<(i64, String, String)>> {

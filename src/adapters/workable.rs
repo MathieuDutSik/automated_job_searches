@@ -3,7 +3,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::adapters::{fetch_value_or_none_on_404, html_to_text, AdapterJob, AtsAdapter, FetchedJobs};
+use crate::adapters::{
+    fetch_value_or_none_on_404, html_to_text, AdapterJob, AtsAdapter, FetchedJobs,
+};
 use crate::ats::AtsKind;
 use crate::http;
 
@@ -228,7 +230,10 @@ pub fn initial_state(html: &str) -> Result<serde_json::Value> {
 
 /// The `data` object of the first `initialState` entry whose key starts
 /// with `key_prefix` (e.g. `api/v1/jobs`, `api/v1/companies/`).
-pub fn state_data<'a>(state: &'a serde_json::Value, key_prefix: &str) -> Option<&'a serde_json::Value> {
+pub fn state_data<'a>(
+    state: &'a serde_json::Value,
+    key_prefix: &str,
+) -> Option<&'a serde_json::Value> {
     state
         .as_object()?
         .iter()
@@ -264,7 +269,11 @@ const MAX_RETRIES_ON_429: u32 = 2;
 pub async fn get_board_page(client: &reqwest::Client, url: &str) -> Result<Option<String>> {
     let mut retries = 0;
     loop {
-        let resp = client.get(url).send().await.with_context(|| format!("GET {url}"))?;
+        let resp = client
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
         match resp.status().as_u16() {
             404 => return Ok(None),
             429 if retries < MAX_RETRIES_ON_429 => {
@@ -275,7 +284,11 @@ pub async fn get_board_page(client: &reqwest::Client, url: &str) -> Result<Optio
                     .and_then(|v| v.trim().parse::<u64>().ok())
                     .map(Duration::from_secs)
                     .unwrap_or(DEFAULT_RETRY_AFTER);
-                tracing::warn!(url, wait_s = wait.as_secs(), "429 from jobs.workable.com; backing off");
+                tracing::warn!(
+                    url,
+                    wait_s = wait.as_secs(),
+                    "429 from jobs.workable.com; backing off"
+                );
                 tokio::time::sleep(wait).await;
                 retries += 1;
             }
@@ -324,7 +337,10 @@ mod tests {
         assert!(j.remote());
         assert_eq!(j.location_text().as_deref(), Some("Germany"));
         assert_eq!(j.description_text().as_deref(), Some("Hi & welcome"));
-        assert_eq!(j.company.as_ref().unwrap().slug().as_deref(), Some("jobs/XyZ123"));
+        assert_eq!(
+            j.company.as_ref().unwrap().slug().as_deref(),
+            Some("jobs/XyZ123")
+        );
     }
 
     #[test]
@@ -333,7 +349,13 @@ mod tests {
             board_company_id("https://jobs.workable.com/company/XyZ123/jobs-at-acme").as_deref(),
             Some("XyZ123")
         );
-        assert_eq!(board_company_id("https://jobs.workable.com/view/abc/rust"), None);
-        assert_eq!(board_company_id("https://apply.workable.com/company/x"), None);
+        assert_eq!(
+            board_company_id("https://jobs.workable.com/view/abc/rust"),
+            None
+        );
+        assert_eq!(
+            board_company_id("https://apply.workable.com/company/x"),
+            None
+        );
     }
 }

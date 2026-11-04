@@ -52,6 +52,14 @@ pbpaste | ajs import                                        # paste from clipboa
 # in one command. Unrecognized URLs are skipped with a warning; lines
 # starting with `#` and blank lines are ignored.
 
+# Phase 1d: find the ATS behind companies stored as `other`
+ajs resolve                       # careers pages / homepages from crawlers
+ajs resolve --all                 # also retry companies tried before
+# Visits up to 4 of each company's own pages (stored link, a careers link
+# found there, /careers, /jobs), honouring robots.txt, and looks for a
+# Greenhouse / Ashby / Lever / ... board URL. New companies are synced
+# immediately, as with `import`.
+
 # Phase 2: refresh full job lists from the ATS JSON APIs
 ajs sync <ats>                    # one ATS (iterates every company of that kind)
 ajs sync all                      # every registered adapter

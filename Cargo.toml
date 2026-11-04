@@ -24,3 +24,4 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 url = "2"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 regex = "1"
+texting_robots = "0.2.2"

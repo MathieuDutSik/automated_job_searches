@@ -63,7 +63,21 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
         .unwrap_or_default();
 
     // boards.greenhouse.io/{slug}[/jobs/{id}]
+    // Embeds (`/embed/job_board?for={slug}`, `/embed/job_app?for={slug}&token=…`)
+    // carry the slug in the query.
     if host == "boards.greenhouse.io" || host == "job-boards.greenhouse.io" {
+        if segs.first() == Some(&"embed") {
+            let slug = url.query_pairs().find(|(k, _)| k == "for")?.1.to_string();
+            let external_id = url
+                .query_pairs()
+                .find(|(k, _)| k == "token")
+                .map(|(_, v)| v.to_string());
+            return Some(AtsRef {
+                kind: AtsKind::Greenhouse,
+                slug,
+                external_id,
+            });
+        }
         let slug = segs.first()?.to_string();
         let external_id = segs
             .iter()
@@ -127,6 +141,9 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
         });
     }
     if let Some(slug) = host.strip_suffix(".workable.com") {
+        if is_non_tenant_subdomain(slug) {
+            return None;
+        }
         return Some(AtsRef {
             kind: AtsKind::Workable,
             slug: slug.to_string(),
@@ -206,6 +223,9 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
 
     // {slug}.breezy.hr/p/{id}
     if let Some(slug) = host.strip_suffix(".breezy.hr") {
+        if is_non_tenant_subdomain(slug) {
+            return None;
+        }
         let external_id = segs
             .iter()
             .position(|s| *s == "p")
@@ -220,6 +240,9 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
 
     // {slug}.teamtailor.com/jobs/{id}
     if let Some(slug) = host.strip_suffix(".teamtailor.com") {
+        if is_non_tenant_subdomain(slug) {
+            return None;
+        }
         let external_id = segs
             .iter()
             .position(|s| *s == "jobs")
@@ -234,6 +257,9 @@ pub fn classify_apply_url(raw: &str) -> Option<AtsRef> {
 
     // {slug}.pinpointhq.com/[en/]postings/{id}
     if let Some(slug) = host.strip_suffix(".pinpointhq.com") {
+        if is_non_tenant_subdomain(slug) {
+            return None;
+        }
         let external_id = segs
             .iter()
             .position(|s| *s == "postings")
@@ -328,6 +354,11 @@ fn is_non_tenant_subdomain(slug: &str) -> bool {
             | "marketing"
             | "about"
             | "info"
+            | "app"
+            | "cdn"
+            | "assets"
+            | "static"
+            | "media"
     )
 }
 
@@ -417,6 +448,28 @@ mod tests {
         assert_eq!(r.kind, AtsKind::Workable);
         assert_eq!(r.slug, "circle");
         assert_eq!(r.external_id.as_deref(), Some("ABC123"));
+    }
+
+    #[test]
+    fn subdomain_ats_marketing_hosts_are_not_tenants() {
+        assert!(classify_apply_url("https://www.teamtailor.com/en/").is_none());
+        assert!(classify_apply_url("https://app.teamtailor.com/login").is_none());
+        assert!(classify_apply_url("https://www.breezy.hr/").is_none());
+        assert_eq!(
+            classify_apply_url("https://ml6.teamtailor.com/jobs/1").unwrap().slug,
+            "ml6"
+        );
+    }
+
+    #[test]
+    fn greenhouse_embed() {
+        let r = classify_apply_url("https://boards.greenhouse.io/embed/job_board?for=acme&b=x")
+            .unwrap();
+        assert_eq!(r.slug, "acme");
+        let r =
+            classify_apply_url("https://boards.greenhouse.io/embed/job_board/js?for=acme").unwrap();
+        assert_eq!(r.slug, "acme");
+        assert!(classify_apply_url("https://boards.greenhouse.io/embed/job_board").is_none());
     }
 
     #[test]

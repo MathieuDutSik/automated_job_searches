@@ -27,10 +27,29 @@ external link is empty. ~36 jobs/run.
 
 ### `hn_whoshiring`
 
-Finds the latest *Ask HN: Who is hiring?* thread via the Algolia search
-API, fetches all top-level comments, extracts URLs from comment HTML,
-prefers known-ATS URLs over generic `Other`. Typically produces ~200+
-jobs/run.
+Finds the 12 newest *Ask HN: Who is hiring?* threads (stories by the
+`whoishiring` account) via the Algolia search API, fetches all
+top-level comments, extracts URLs from comment HTML, prefers known-ATS
+URLs over generic `Other`. The newest thread is stored in full: one
+company and one job per comment, ~200+ per run. The 11 older ones add
+only companies on a known ATS, without job rows — their posts are
+stale, but `sync` fetches what those boards have open today. The first
+12-thread run added ~400 companies.
+
+### `ajs resolve` (not a crawler)
+
+A pass over companies stored as `other` — mostly careers pages or
+homepages linked from HN. For each, it visits up to four of the
+company's own pages: the stored link, the first same-site careers link
+found there, `/careers`, `/jobs`. A redirect to a known ATS board (e.g.
+`grnh.se`) wins at once; otherwise every absolute URL in the page is
+classified and the board named most often is kept, so a page's own
+embed beats a stray link to another company's board. Greenhouse embeds
+(`/embed/job_board?for={slug}`) are classified by their `for` query
+parameter. Found companies are upserted (`discovered_via = resolve`) and
+synced immediately. Each attempt is stored in `resolve_attempts`
+(result `kind/slug` or NULL); re-runs skip attempted companies unless
+`--all`. The `other` row itself is left in place.
 
 ### `thehub`
 
@@ -289,6 +308,7 @@ but are noted in case that changes.
 | cryptocurrencyjobs | `index.xml` RSS + detail pages | RSS feed | allowed | ✅ authorized |
 | cryptojobs | `/jobs/feed` RSS | RSS feed | allowed | ✅ authorized |
 | hn_whoshiring | `hn.algolia.com/api/v1` | yes (HN Search API) | none | ✅ authorized |
+| resolve | each company's own site | — | checked per host before every request; 4xx robots.txt = allowed, 5xx/unreachable = host skipped | ✅ authorized where robots.txt allows; 1 request/s |
 | thehub | `/jobs` + detail pages | no | allowed | ✅ authorized (HTML) |
 | workable (crawler) | `jobs.workable.com/sitemap.xml` + `/search/*` pages | sitemap listed in robots.txt | `/search/*` allowed, `/search*?*` disallowed | ✅ authorized — no query strings, so no pagination |
 | web3career | `/remote-jobs` | no | allowed | ⛔ apply links behind a sign-up wall — parked |

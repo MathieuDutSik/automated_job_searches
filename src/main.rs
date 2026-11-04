@@ -10,6 +10,7 @@ mod crawlers;
 mod db;
 mod discover;
 mod http;
+mod resolve;
 mod search;
 
 use crate::db::{Db, StatusFilter};
@@ -73,6 +74,17 @@ enum Cmd {
     Import {
         /// URLs to import. If empty, reads stdin.
         urls: Vec<String>,
+    },
+    /// Find the ATS behind companies stored as `other` (careers pages,
+    /// homepages). Visits up to four of each company's own pages — the
+    /// stored link, a careers link found there, `/careers`, `/jobs` —
+    /// honouring robots.txt, and looks for a known ATS board URL. Found
+    /// companies are added and synced right away. Each company is tried
+    /// once; `--all` retries the ones already attempted.
+    Resolve {
+        /// Retry companies that earlier runs already attempted.
+        #[arg(long)]
+        all: bool,
     },
     /// List rows from the database
     List {
@@ -411,55 +423,26 @@ async fn run() -> Result<()> {
             );
 
             // Auto-sync the newly imported companies — only those, not every
-            // company sharing the same ATS kind. Group by kind so we build
-            // each adapter at most once.
-            if !fresh.is_empty() {
-                use std::collections::BTreeMap;
-                let mut by_kind: BTreeMap<&'static str, Vec<(i64, String)>> = BTreeMap::new();
-                for (kind, id, slug) in fresh {
-                    by_kind.entry(kind.as_str()).or_default().push((id, slug));
-                }
-                let mut total_jobs_new = 0u64;
-                let mut total_synced = 0u64;
-                let mut skipped_no_adapter: Vec<&'static str> = Vec::new();
-                for (kind_name, slugs) in by_kind {
-                    let Some(adapter) = adapters::by_name(kind_name) else {
-                        skipped_no_adapter.push(kind_name);
-                        continue;
-                    };
-                    for (idx, (company_id, slug)) in slugs.into_iter().enumerate() {
-                        if idx > 0 {
-                            tokio::time::sleep(adapters::POLITENESS_DELAY).await;
-                        }
-                        match adapters::sync_one_slug(
-                            &db,
-                            adapter.as_ref(),
-                            company_id,
-                            &slug,
-                            &slug,
-                        )
-                        .await
-                        {
-                            Ok(r) => {
-                                total_synced += r.companies_synced;
-                                total_jobs_new += r.jobs_new;
-                            }
-                            Err(e) => tracing::warn!(error = %e, slug, "auto-sync failed"),
-                        }
-                    }
-                }
-                println!(
-                    "auto-synced {total_synced} new compan{plural}, {total_jobs_new} jobs pulled",
-                    plural = if total_synced == 1 { "y" } else { "ies" }
-                );
-                for kind in skipped_no_adapter {
-                    println!(
-                        "  note: no adapter for `{kind}` yet — companies stored but not synced"
-                    );
-                }
-            }
+            // company sharing the same ATS kind.
+            sync_fresh(&db, fresh).await;
         }
-        Cmd::Mark { selector, status, note } => {
+        Cmd::Resolve { all } => {
+            let (r, fresh) = resolve::run(&db, all).await?;
+            println!(
+                "resolve: tried {} companies, {} resolved ({} new), {} pages fetched, {} pages skipped by robots.txt",
+                r.companies_tried, r.resolved, r.companies_new, r.pages_fetched, r.robots_blocked
+            );
+            let fresh = fresh
+                .into_iter()
+                .map(|f| (f.kind, f.company_id, f.slug))
+                .collect();
+            sync_fresh(&db, fresh).await;
+        }
+        Cmd::Mark {
+            selector,
+            status,
+            note,
+        } => {
             let canonical = match status.as_str() {
                 "reset" | "new" => "new",
                 "applied" => "applied",
@@ -594,4 +577,45 @@ fn format_age(posted_at: &str, now: chrono::DateTime<chrono::Utc>) -> String {
         }
     }
     phrase.to_string()
+}
+
+/// Sync just the companies a command has newly inserted, not every
+/// company of their kind. Grouped by kind so each adapter is built once.
+async fn sync_fresh(db: &db::Db, fresh: Vec<(ats::AtsKind, i64, String)>) {
+    if fresh.is_empty() {
+        return;
+    }
+    use std::collections::BTreeMap;
+    let mut by_kind: BTreeMap<&'static str, Vec<(i64, String)>> = BTreeMap::new();
+    for (kind, id, slug) in fresh {
+        by_kind.entry(kind.as_str()).or_default().push((id, slug));
+    }
+    let mut total_jobs_new = 0u64;
+    let mut total_synced = 0u64;
+    let mut skipped_no_adapter: Vec<&'static str> = Vec::new();
+    for (kind_name, slugs) in by_kind {
+        let Some(adapter) = adapters::by_name(kind_name) else {
+            skipped_no_adapter.push(kind_name);
+            continue;
+        };
+        for (idx, (company_id, slug)) in slugs.into_iter().enumerate() {
+            if idx > 0 {
+                tokio::time::sleep(adapters::POLITENESS_DELAY).await;
+            }
+            match adapters::sync_one_slug(db, adapter.as_ref(), company_id, &slug, &slug).await {
+                Ok(r) => {
+                    total_synced += r.companies_synced;
+                    total_jobs_new += r.jobs_new;
+                }
+                Err(e) => tracing::warn!(error = %e, slug, "auto-sync failed"),
+            }
+        }
+    }
+    println!(
+        "auto-synced {total_synced} new compan{plural}, {total_jobs_new} jobs pulled",
+        plural = if total_synced == 1 { "y" } else { "ies" }
+    );
+    for kind in skipped_no_adapter {
+        println!("  note: no adapter for `{kind}` yet — companies stored but not synced");
+    }
 }
