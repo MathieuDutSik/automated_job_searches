@@ -64,6 +64,17 @@ ajs resolve --all                 # also retry companies tried before
 ajs sync <ats>                    # one ATS (iterates every company of that kind)
 ajs sync all                      # every registered adapter
 
+# Filter: hide jobs you can't or won't apply to
+ajs filter                              # re-check every open job against filters.toml
+ajs list jobs --excluded                # only excluded jobs, each with its reason
+ajs list jobs --unfiltered              # ignore the filter
+# Rules in filters.toml, checked in order: title (target roles, excluded
+# words), remote, region (Europe/EMEA or worldwide; location first, then
+# phrases like "must be based in the US" in the description), salary (top
+# of the stated range below `min_usd`, converted to USD per year). The
+# first failed rule is the reason. crawl / sync / import / resolve check
+# new jobs by themselves, and every open job when filters.toml changed.
+
 # Inspect the data
 ajs list companies --limit 50           # flat list of companies
 ajs list jobs                           # flat list of open jobs (unlimited by default)

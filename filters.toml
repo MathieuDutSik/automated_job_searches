@@ -1,0 +1,126 @@
+# Rules for `ajs filter`. Each open job is checked in this order and the
+# first rule it fails becomes its exclusion reason:
+#
+#   1. title   — must match a `keep` pattern and no `exclude` pattern
+#   2. remote  — must be remote
+#   3. region  — must not be restricted to a region outside `allow`
+#   4. salary  — when a salary is stated, its top must reach `min_usd`
+#
+# Patterns are regexes matched case-insensitively at word boundaries,
+# except all-caps terms of up to 5 letters in the region lists (US, USA,
+# UK, EU, LATAM, APAC, EMEA, ...), which match case-sensitively so `US`
+# doesn't hit the word "us". Edit this file and the next
+# crawl/sync/filter re-checks every open job.
+
+[title]
+# Roles you want: software engineering, research / maths.
+keep = [
+    'engineer', 'engineering', 'developer', 'programmer', 'software', 'swe',
+    'backend', 'back-end', 'full[- ]?stack', 'systems', 'architect',
+    'compilers?', 'c\+\+', 'rust', 'zig', 'haskell', 'ocaml', 'julia',
+    'research', 'researcher', 'scientist', 'mathematician', 'mathematics',
+    'algorithms?', 'cryptograph\w*', 'hpc', 'scientific', 'numerical',
+    'computational', 'formal verification', 'quant(itative)? (researcher|developer)',
+]
+# Checked first: any match excludes, even if a keep pattern matches too.
+exclude = [
+    'manager', 'management', 'director', 'head of', 'vp', 'vice president',
+    'chief', 'president', 'founder',
+    'sales', 'account executive', 'account manager', 'business development',
+    'marketing', 'growth', 'seo', 'sem', 'ppc', 'copywriter', 'content',
+    'community', 'social media', 'recruiter', 'recruiting', 'talent', 'hr',
+    'people partner', 'customer success', 'customer support', 'support',
+    'solutions? (engineer|architect|consultant)', 'sales engineer',
+    'pre-?sales', 'implementation', 'onboarding',
+    'designer', 'design', 'ux', 'ui',
+    'devops', 'sre', 'site reliability', 'it support', 'helpdesk',
+    'data engineer', 'data analyst', 'data scientist', 'analyst',
+    'machine learning engineer', 'ml engineer', 'ml ops', 'mlops',
+    'qa', 'quality assurance', 'test engineer', 'tester', 'sdet',
+    'network engineer', 'field', 'hardware', 'mechanical', 'electrical',
+    'civil', 'structural', 'process engineer', 'manufacturing',
+    'intern', 'internship', 'working student', 'apprentice', 'trainee',
+    'product owner', 'scrum master', 'project', 'program',
+    'business operations', 'revenue operations', 'revops', 'sales operations',
+    'consultant', 'accountant', 'legal', 'counsel', 'paralegal',
+    'teacher', 'tutor', 'translator', 'assistant', 'representative',
+    'nurse', 'physician', 'clinical',
+    'subject matter expert', 'ai trainer', 'ai training', 'annotator',
+    'evaluator', 'analytics engineer',
+    'advocate', 'developer relations', 'devrel',
+]
+
+[remote]
+# A job with no remote flag counts as remote when its location or title
+# contains one of these.
+unknown_ok_if = ['remote', 'anywhere', 'worldwide', 'work from home', 'telecommute']
+
+[region]
+# Locations that are fine for you (Europe / EMEA, plus open-to-all).
+allow = [
+    'worldwide', 'anywhere', 'global', 'globally', 'international',
+    'europe', 'european', 'EMEA', 'EU', 'EEA', 'CET', 'CEST',
+    'albania', 'andorra', 'austria', 'belarus', 'belgium', 'bosnia',
+    'bulgaria', 'croatia', 'cyprus', 'czech\w*', 'czechia', 'denmark',
+    'estonia', 'finland', 'france', 'germany', 'greece', 'hungary',
+    'iceland', 'ireland', 'italy', 'kosovo', 'latvia', 'liechtenstein',
+    'lithuania', 'luxembourg', 'malta', 'moldova', 'monaco', 'montenegro',
+    'netherlands', 'north macedonia', 'macedonia', 'norway', 'poland',
+    'portugal', 'romania', 'san marino', 'serbia', 'slovakia', 'slovenia',
+    'spain', 'sweden', 'switzerland', 'ukraine', 'united kingdom',
+    'great britain', 'england', 'scotland', 'wales', 'UK',
+    'london', 'berlin', 'paris', 'amsterdam', 'madrid', 'barcelona',
+    'lisbon', 'warsaw', 'prague', 'vienna', 'zurich', 'dublin',
+    'stockholm', 'copenhagen', 'zagreb', 'munich', 'milan',
+]
+# Locations that restrict a job to somewhere else. A location naming one
+# of these and nothing from `allow` excludes the job.
+block = [
+    'US', 'USA', 'U\.S\.', 'U\.S\.A\.', 'united states', 'america', 'americas',
+    'north america', 'AMER', 'NA', 'NORAM', 'canada', 'canadian',
+    'LATAM', 'latin america', 'south america', 'central america',
+    'mexico', 'brazil', 'argentina', 'colombia', 'chile', 'peru',
+    'uruguay', 'paraguay', 'bolivia', 'ecuador', 'venezuela', 'costa rica',
+    'guatemala', 'panama', 'dominican republic', 'puerto rico',
+    'APAC', 'asia', 'asian', 'india', 'pakistan', 'bangladesh', 'sri lanka',
+    'nepal', 'philippines', 'indonesia', 'malaysia', 'singapore', 'thailand',
+    'vietnam', 'china', 'hong kong', 'taiwan', 'japan', 'korea',
+    'australia', 'new zealand', 'ANZ', 'oceania',
+    'africa', 'nigeria', 'kenya', 'south africa', 'egypt', 'morocco',
+    'algeria', 'tunisia', 'ghana', 'ethiopia', 'uganda', 'rwanda',
+    'middle east', 'MENA', 'israel', 'turkey', 'türkiye', 'saudi arabia',
+    'united arab emirates', 'UAE', 'dubai', 'qatar', 'jordan', 'lebanon',
+    'georgia', 'armenia', 'azerbaijan', 'kazakhstan', 'uzbekistan', 'russia',
+    'new york', 'san francisco', 'california', 'texas', 'seattle',
+    'boston', 'chicago', 'austin', 'toronto', 'vancouver', 'montreal',
+    'EST', 'PST', 'PT', 'ET', 'CST',
+]
+# Description phrases that restrict the job to a region. `{BLOCK}` stands
+# for any `block` term. Only used when the location names no `allow` term.
+description_restrictions = [
+    '(based|located|reside|residing|living|live)\s+(in|within)\s+(the\s+)?{BLOCK}',
+    '{BLOCK}[- ](only|based|residents?)\b',
+    '(authori[sz]ed|eligible|legally able|permitted)\s+to\s+work\s+in\s+(the\s+)?{BLOCK}',
+    '(open|available)\s+(only\s+)?to\s+(candidates|applicants|residents)\s+(in|from|of)\s+(the\s+)?{BLOCK}',
+    '(only|exclusively)\s+(hiring|accepting|considering)\s+(candidates\s+|applicants\s+)?(in|from)\s+(the\s+)?{BLOCK}',
+]
+
+[salary]
+# Exclude when the top of the stated range, per year in USD, is below this.
+min_usd = 90000
+# Rough conversion to USD. Unknown currencies are left unconverted.
+[salary.fx_to_usd]
+USD = 1.0
+EUR = 1.08
+GBP = 1.27
+CHF = 1.13
+CAD = 0.73
+AUD = 0.66
+NZD = 0.60
+SEK = 0.095
+NOK = 0.093
+DKK = 0.145
+PLN = 0.25
+INR = 0.012
+BRL = 0.18
+MXN = 0.055

@@ -9,11 +9,12 @@ mod ats;
 mod crawlers;
 mod db;
 mod discover;
+mod filter;
 mod http;
 mod resolve;
 mod search;
 
-use crate::db::{Db, StatusFilter};
+use crate::db::{Db, StatusFilter, VerdictFilter};
 
 #[derive(Parser, Debug)]
 #[command(name = "ajs", about = "Automated job searches")]
@@ -21,6 +22,10 @@ struct Cli {
     /// Path to the SQLite database. Defaults to <repo>/jobs.db, baked at build time.
     #[arg(long, global = true, default_value = concat!(env!("CARGO_MANIFEST_DIR"), "/jobs.db"))]
     db: PathBuf,
+
+    /// Path to the job filter rules. Defaults to <repo>/filters.toml.
+    #[arg(long, global = true, default_value = concat!(env!("CARGO_MANIFEST_DIR"), "/filters.toml"))]
+    filters: PathBuf,
 
     #[command(subcommand)]
     cmd: Cmd,
@@ -86,6 +91,12 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
+    /// Check open jobs against the rules in filters.toml (title, remote,
+    /// region, salary) and store a keep/exclude verdict with the reason.
+    /// `list jobs` then hides excluded jobs. Runs by itself after crawl,
+    /// sync, import and resolve for new jobs, and for every open job when
+    /// the rules changed; `ajs filter` re-checks everything.
+    Filter,
     /// List rows from the database
     List {
         #[command(subcommand)]
@@ -146,6 +157,12 @@ enum ListWhat {
         /// Show only rows you marked `applied`.
         #[arg(long, conflicts_with = "all")]
         applied: bool,
+        /// Show only jobs the filter excluded, with the reason.
+        #[arg(long, conflicts_with = "unfiltered")]
+        excluded: bool,
+        /// Ignore the filter: show kept and excluded jobs alike.
+        #[arg(long)]
+        unfiltered: bool,
     },
     /// Print every company that has open jobs, with its jobs indented underneath.
     ByCompany {
@@ -173,6 +190,10 @@ async fn run() -> Result<()> {
 
     let cli = Cli::parse();
     let db = Db::open(&cli.db)?;
+    let refilter = matches!(
+        cli.cmd,
+        Cmd::Crawl { .. } | Cmd::Sync { .. } | Cmd::Import { .. } | Cmd::Resolve { .. }
+    );
 
     match cli.cmd {
         Cmd::Crawl { name } => {
@@ -273,7 +294,16 @@ async fn run() -> Result<()> {
                 r#match,
                 all,
                 applied,
+                excluded,
+                unfiltered,
             } => {
+                let verdict_filter = if excluded {
+                    VerdictFilter::ExcludedOnly
+                } else if unfiltered {
+                    VerdictFilter::All
+                } else {
+                    VerdictFilter::HideExcluded
+                };
                 let status_filter = if applied {
                     StatusFilter::AppliedOnly
                 } else if all {
@@ -281,8 +311,14 @@ async fn run() -> Result<()> {
                 } else {
                     StatusFilter::HideDismissed
                 };
-                let rows =
-                    db.list_jobs_filtered(limit, start, remote, r#match.as_deref(), status_filter)?;
+                let rows = db.list_jobs_filtered(
+                    limit,
+                    start,
+                    remote,
+                    r#match.as_deref(),
+                    status_filter,
+                    verdict_filter,
+                )?;
                 let now = chrono::Utc::now();
                 for row in rows {
                     let remote_tag = if row.remote == Some(true) {
@@ -295,13 +331,17 @@ async fn run() -> Result<()> {
                         "dismissed" => " [dismissed]",
                         _ => "",
                     };
+                    let filter_tag = match &row.filter_reason {
+                        Some(r) => format!(" [excluded: {r}]"),
+                        None => String::new(),
+                    };
                     let age = row
                         .posted_at
                         .as_deref()
                         .map(|s| format_age(s, now))
                         .unwrap_or_else(|| "      ?".to_string());
                     println!(
-                        "{id:>6}  {age:>7}  {company} | {title}{remote_tag}{status_tag} | {location} | {url}",
+                        "{id:>6}  {age:>7}  {company} | {title}{remote_tag}{status_tag}{filter_tag} | {location} | {url}",
                         id = row.id,
                         company = row.company,
                         title = row.title,
@@ -426,6 +466,17 @@ async fn run() -> Result<()> {
             // company sharing the same ATS kind.
             sync_fresh(&db, fresh).await;
         }
+        Cmd::Filter => {
+            let rules = filter::Rules::load(&cli.filters)?;
+            let r = filter::apply(&db, &rules, true)?;
+            println!(
+                "filter: {} open jobs checked, {} kept, {} excluded",
+                r.scored, r.kept, r.excluded
+            );
+            for (rule, n) in &r.by_rule {
+                println!("  {n:>6}  {rule}");
+            }
+        }
         Cmd::Resolve { all } => {
             let (r, fresh) = resolve::run(&db, all).await?;
             println!(
@@ -516,7 +567,27 @@ async fn run() -> Result<()> {
             }
         }
     }
+    if refilter {
+        auto_filter(&db, &cli.filters);
+    }
     Ok(())
+}
+
+/// Score new jobs (or all, if the rules changed) after a command that
+/// adds jobs. A missing or broken rules file only warns: it shouldn't
+/// fail the crawl or sync that just ran.
+fn auto_filter(db: &Db, path: &std::path::Path) {
+    if !path.exists() {
+        return;
+    }
+    match filter::Rules::load(path).and_then(|rules| filter::apply(db, &rules, false)) {
+        Ok(r) if r.scored > 0 => println!(
+            "filter: {} jobs checked, {} kept, {} excluded",
+            r.scored, r.kept, r.excluded
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "job filter not applied"),
+    }
 }
 
 /// Format an elapsed `Duration` as e.g. `423ms`, `47s`, `1min 34s`,

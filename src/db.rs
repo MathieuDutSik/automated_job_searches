@@ -67,6 +67,16 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
     error        TEXT
 );
 
+-- `ajs filter` verdict per job: verdict is 'keep' or 'exclude'; reason
+-- names the first rule an excluded job failed. Kept out of `jobs` so
+-- writing verdicts doesn't fire the FTS update trigger.
+CREATE TABLE IF NOT EXISTS job_filter (
+    job_id    INTEGER PRIMARY KEY REFERENCES jobs(id),
+    verdict   TEXT NOT NULL,
+    reason    TEXT,
+    scored_at TEXT NOT NULL
+);
+
 -- One row per `ajs resolve` attempt on an `other` company. `result` is
 -- the `kind/slug` it resolved to, or NULL when no known ATS was found.
 CREATE TABLE IF NOT EXISTS resolve_attempts (
@@ -120,6 +130,18 @@ pub struct JobListing {
     pub remote: Option<bool>,
     pub status: String,
     pub posted_at: Option<String>,
+    /// `job_filter.reason` for excluded jobs.
+    pub filter_reason: Option<String>,
+}
+
+/// What `ajs filter` needs from a job.
+pub struct FilterInput {
+    pub id: i64,
+    pub title: String,
+    pub location: Option<String>,
+    pub remote: Option<bool>,
+    pub description: Option<String>,
+    pub raw_json: String,
 }
 
 /// Compact job tuple shown under a company in `ajs list by-company`.
@@ -346,6 +368,65 @@ impl Db {
         Ok(rows)
     }
 
+    /// Open jobs to score: all of them, or only those without a verdict.
+    pub fn jobs_for_filter(&self, all: bool) -> Result<Vec<FilterInput>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT j.id, j.title, j.location, j.remote, j.description, j.raw_json
+               FROM jobs j
+              WHERE j.closed_at IS NULL
+                AND (?1 OR j.id NOT IN (SELECT job_id FROM job_filter))",
+        )?;
+        let rows = stmt
+            .query_map(params![all], |r| {
+                Ok(FilterInput {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    location: r.get(2)?,
+                    remote: r.get::<_, Option<i64>>(3)?.map(|i| i != 0),
+                    description: r.get(4)?,
+                    raw_json: r.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn store_filter_verdicts(&self, verdicts: &[(i64, crate::filter::Verdict)]) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO job_filter (job_id, verdict, reason, scored_at) VALUES (?, ?, ?, ?)
+                 ON CONFLICT(job_id) DO UPDATE SET verdict = excluded.verdict,
+                     reason = excluded.reason, scored_at = excluded.scored_at",
+            )?;
+            for (id, v) in verdicts {
+                let (verdict, reason) = match v {
+                    crate::filter::Verdict::Keep => ("keep", None),
+                    crate::filter::Verdict::Exclude(r) => ("exclude", Some(r.as_str())),
+                };
+                stmt.execute(params![id, verdict, reason, now])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = ?", params![key], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO meta(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
     pub fn record_resolve_attempt(&self, company_id: i64, result: Option<&str>) -> Result<()> {
         self.conn.execute(
             "INSERT INTO resolve_attempts (company_id, attempted_at, result) VALUES (?, ?, ?) \
@@ -472,10 +553,12 @@ impl Db {
         remote_only: bool,
         match_query: Option<&str>,
         status: StatusFilter,
+        verdict: VerdictFilter,
     ) -> Result<Vec<JobListing>> {
         let mut sql = String::from(
-            "SELECT j.id, c.name, j.title, COALESCE(j.location, ''), j.apply_url, j.remote, j.status, j.posted_at
-               FROM jobs j JOIN companies c ON c.id = j.company_id",
+            "SELECT j.id, c.name, j.title, COALESCE(j.location, ''), j.apply_url, j.remote, j.status, j.posted_at, jf.reason
+               FROM jobs j JOIN companies c ON c.id = j.company_id
+               LEFT JOIN job_filter jf ON jf.job_id = j.id",
         );
         if match_query.is_some() {
             sql.push_str(" JOIN jobs_fts f ON f.rowid = j.id");
@@ -488,6 +571,13 @@ impl Db {
             StatusFilter::HideDismissed => sql.push_str(" AND j.status != 'dismissed'"),
             StatusFilter::All => {}
             StatusFilter::AppliedOnly => sql.push_str(" AND j.status = 'applied'"),
+        }
+        match verdict {
+            VerdictFilter::HideExcluded => {
+                sql.push_str(" AND COALESCE(jf.verdict, 'keep') != 'exclude'")
+            }
+            VerdictFilter::ExcludedOnly => sql.push_str(" AND jf.verdict = 'exclude'"),
+            VerdictFilter::All => {}
         }
         if match_query.is_some() {
             sql.push_str(" AND jobs_fts MATCH ?");
@@ -512,6 +602,7 @@ impl Db {
                 remote: r.get::<_, Option<i64>>(5)?.map(|i| i != 0),
                 status: r.get(6)?,
                 posted_at: r.get(7)?,
+                filter_reason: r.get(8)?,
             })
         };
         let rows: Vec<_> = if let Some(q) = match_query {
@@ -625,6 +716,14 @@ pub enum StatusFilter {
     HideDismissed,
     All,
     AppliedOnly,
+}
+
+/// Which `ajs filter` verdicts `list jobs` shows. Jobs not scored yet
+/// count as kept.
+pub enum VerdictFilter {
+    HideExcluded,
+    ExcludedOnly,
+    All,
 }
 
 /// Idempotently add a column to an existing table. SQLite has `CREATE TABLE
