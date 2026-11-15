@@ -23,8 +23,9 @@ pub struct DiscoverPlan {
 }
 
 // Besides the generic "Remote" query, the big three ATSes get
-// optimisation / operations-research queries: those roles are rare and
-// rarely surface through the aggregator crawlers.
+// optimisation / operations-research queries, and they and Workday get
+// quantitative-finance queries: those roles are rare and rarely surface
+// through the aggregator crawlers.
 //
 // NOTE: Brave's `inurl:` operator silently returns 0 results, so this list
 // avoids it. Brave's `site:` semantics also vary by root: it pulls subdomains
@@ -44,6 +45,10 @@ pub const PLANS: &[DiscoverPlan] = &[
             r#"site:job-boards.greenhouse.io "operations research""#,
             r#"site:boards.greenhouse.io "optimization engineer""#,
             r#"site:job-boards.greenhouse.io "optimization engineer""#,
+            r#"site:boards.greenhouse.io "quantitative researcher""#,
+            r#"site:job-boards.greenhouse.io "quantitative researcher""#,
+            r#"site:boards.greenhouse.io "quantitative developer""#,
+            r#"site:job-boards.greenhouse.io "quantitative developer""#,
         ],
     },
     DiscoverPlan {
@@ -53,6 +58,8 @@ pub const PLANS: &[DiscoverPlan] = &[
             r#"site:jobs.ashbyhq.com "operations research""#,
             r#"site:jobs.ashbyhq.com "optimization engineer""#,
             r#"site:jobs.ashbyhq.com "mixed integer""#,
+            r#"site:jobs.ashbyhq.com "quantitative researcher""#,
+            r#"site:jobs.ashbyhq.com "quantitative developer""#,
         ],
     },
     DiscoverPlan {
@@ -62,6 +69,8 @@ pub const PLANS: &[DiscoverPlan] = &[
             r#"site:jobs.lever.co "operations research""#,
             r#"site:jobs.lever.co "optimization engineer""#,
             r#"site:jobs.lever.co "mixed integer""#,
+            r#"site:jobs.lever.co "quantitative researcher""#,
+            r#"site:jobs.lever.co "quantitative developer""#,
         ],
     },
     DiscoverPlan {
@@ -76,7 +85,11 @@ pub const PLANS: &[DiscoverPlan] = &[
     },
     DiscoverPlan {
         kind: AtsKind::Workday,
-        queries: &[r#"site:myworkdayjobs.com "Remote""#],
+        queries: &[
+            r#"site:myworkdayjobs.com "Remote""#,
+            r#"site:myworkdayjobs.com "quantitative researcher""#,
+            r#"site:myworkdayjobs.com "quantitative developer""#,
+        ],
     },
     // BambooHR — Brave's `site:` collapses to www.bamboohr.com here. Use
     // role-keyword variations to surface per-tenant boards one at a time.

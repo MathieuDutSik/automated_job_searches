@@ -51,6 +51,20 @@ synced immediately. Each attempt is stored in `resolve_attempts`
 (result `kind/slug` or NULL); re-runs skip attempted companies unless
 `--all`. The `other` row itself is left in place.
 
+### `openquant`
+
+OpenQuant (`openquant.co`), a job board for quantitative research,
+trading and development. The listing's pagination is client-side, so the
+crawler reads `/server-sitemap-index.xml` (~2,000 `/job/{slug}/{id}`
+pages, every job since 2022, `lastmod` always "now") and visits job pages
+highest id first, one per second, stopping after 25 consecutive postings
+older than 120 days. Each page embeds its record in `__NEXT_DATA__`
+(company, position, location, country, posted date, Markdown description,
+skills) with the employer's own `ApplicationUrl`, mostly Workday or
+Greenhouse, which files the job and company under that ATS. No remote
+flag; `MinSalary`/`MaxSalary` are estimates (`SalaryEstimated`) and are
+not used by the salary rule.
+
 ### `thehub`
 
 Nordic startup board. Scrapes `https://thehub.io/jobs` for `/jobs/{24-hex-id}`
@@ -94,8 +108,11 @@ Wired for eight ATSes. Each sync populates the plain-text description
 (when the ATS exposes one in the listing API), the structured `remote`
 flag, and the per-job raw JSON.
 
-- **Ashby** — `isRemote`, `descriptionPlain` (cheap — already in the
-  posting API response).
+- **Ashby** — `descriptionPlain` (already in the posting API response).
+  Location is `location` plus `secondaryLocations[].location` (the older
+  `locationName` field is gone from current responses). Remote comes from
+  `workplaceType` (`Remote` / `Hybrid` / `OnSite`), falling back to
+  `isRemote`, which is also true for hybrid roles.
 - **Lever** — `descriptionPlain`, `workplaceType` (`remote` / `on-site` /
   `hybrid` / `unspecified`).
 - **Greenhouse** — uses `?content=true`. Description is HTML-entity-encoded;
@@ -314,6 +331,7 @@ but are noted in case that changes.
 | hn_whoshiring | `hn.algolia.com/api/v1` | yes (HN Search API) | none | ✅ authorized |
 | resolve | each company's own site | — | checked per host before every request; 4xx robots.txt = allowed, 5xx/unreachable = host skipped | ✅ authorized where robots.txt allows; 1 request/s |
 | thehub | `/jobs` + detail pages | no | allowed | ✅ authorized (HTML) |
+| openquant | `openquant.co/server-sitemap-index.xml` + `/job/*` pages | sitemap listed in robots.txt | `User-agent: * Allow: /` | ✅ authorized; 1 request/s |
 | workable (crawler) | `jobs.workable.com/sitemap.xml` + `/search/*` pages | sitemap listed in robots.txt | `/search/*` allowed, `/search*?*` disallowed | ✅ authorized — no query strings, so no pagination |
 | web3career | `/remote-jobs` | no | allowed | ⛔ apply links behind a sign-up wall — parked |
 | workingnomads | `/api/exposed_jobs/` + `/job/go/` redirect | public JSON | allowed (empty `Disallow`) | ✅ authorized |
@@ -376,6 +394,9 @@ Aggregators that were triaged and **not** added, with the reason:
 | `europeanremote.com` | Angular SPA (`ng-version`, `_ngcontent-*`); only 1 outbound apply URL reaches the static HTML — built and discarded after measuring real yield. |
 | `wearedevelopers.com` | Server-rendered but only ~2 EU-remote results visible at a time and apply URLs are internal `/en/companies/{cid}/{jid}/...` — low yield for the effort. |
 | `rustjobs.dev` | Vercel JS challenge. |
+| `quantnet.com` | robots.txt `Disallow: /` for all, and a Cloudflare challenge (`cf-mitigated: challenge`). |
+| `selbyjennings.com` | Quant recruiter. Vercel Security Checkpoint (HTTP 429) on the home page. |
+| `efinancialcareers.com` | AWS WAF CAPTCHA (`x-amzn-waf-action: captcha`, HTTP 405 "Human Verification") on every path, sitemaps included (checked 2026-11-15). robots.txt also disallows `/search`, `/remote`, `/v1`, `/v3` and sets `Crawl-delay: 10`; only Googlebot-Jobs is allowed on `/jobs/`. |
 
 Three rough patterns to watch for:
 

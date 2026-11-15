@@ -37,11 +37,15 @@ struct TitleConfig {
 #[derive(Deserialize)]
 struct RemoteConfig {
     unknown_ok_if: Vec<String>,
+    hybrid_location: Vec<String>,
+    onsite_location: Vec<String>,
+    hybrid_description: Vec<String>,
 }
 
 #[derive(Deserialize)]
 struct RegionConfig {
     allow: Vec<String>,
+    single_country: Vec<String>,
     block: Vec<String>,
     description_restrictions: Vec<String>,
 }
@@ -58,7 +62,11 @@ pub struct Rules {
     /// None when `always_keep` is empty.
     title_always: Option<Regex>,
     remote_text: Regex,
+    hybrid_location: Regex,
+    onsite_location: Regex,
+    hybrid_desc: Vec<Regex>,
     region_allow: Regex,
+    region_single: Regex,
     region_block: Regex,
     region_desc: Vec<Regex>,
     min_usd: f64,
@@ -80,7 +88,7 @@ impl Rules {
 
     pub fn parse(text: &str) -> Result<Self> {
         let cfg: Config = toml::from_str(text)?;
-        let block_alt = alternation(&cfg.region.block);
+        let block_alt = bounded(&cfg.region.block);
         let region_desc = cfg
             .region
             .description_restrictions
@@ -96,8 +104,17 @@ impl Rules {
                 Some(ci_regex(&bounded(&cfg.title.always_keep))?)
             },
             remote_text: ci_regex(&bounded(&cfg.remote.unknown_ok_if))?,
-            region_allow: ci_regex(&format!(r"\b(?:{})\b", alternation(&cfg.region.allow)))?,
-            region_block: ci_regex(&format!(r"\b(?:{block_alt})\b"))?,
+            hybrid_location: ci_regex(&bounded(&cfg.remote.hybrid_location))?,
+            onsite_location: ci_regex(&bounded(&cfg.remote.onsite_location))?,
+            hybrid_desc: cfg
+                .remote
+                .hybrid_description
+                .iter()
+                .map(|p| ci_regex(p))
+                .collect::<Result<Vec<_>>>()?,
+            region_single: ci_regex(&bounded(&cfg.region.single_country))?,
+            region_allow: ci_regex(&bounded(&cfg.region.allow))?,
+            region_block: ci_regex(&block_alt)?,
             region_desc,
             min_usd: cfg.salary.min_usd,
             fx: cfg
@@ -130,10 +147,28 @@ impl Rules {
         if !remote {
             return Verdict::Exclude("not remote".to_string());
         }
+        if let Some(m) = self.hybrid_location.find(&place) {
+            return Verdict::Exclude(format!("hybrid: {}", m.as_str().to_lowercase()));
+        }
+        if !self.remote_text.is_match(&place) {
+            if let Some(m) = self.onsite_location.find(&place) {
+                return Verdict::Exclude(format!("hybrid: {}", m.as_str().to_lowercase()));
+            }
+        }
+        if let Some(desc) = job.description.as_deref() {
+            for re in &self.hybrid_desc {
+                if let Some(m) = re.find(desc) {
+                    return Verdict::Exclude(format!("hybrid (description): {}", m.as_str()));
+                }
+            }
+        }
 
         if !self.region_allow.is_match(&place) {
             if let Some(m) = self.region_block.find(&place) {
                 return Verdict::Exclude(format!("region: {}", m.as_str()));
+            }
+            if let Some(m) = self.region_single.find(&place) {
+                return Verdict::Exclude(format!("region: single country ({})", m.as_str()));
             }
             if let Some(desc) = job.description.as_deref() {
                 for re in &self.region_desc {
@@ -176,25 +211,27 @@ impl Rules {
     }
 }
 
-/// Patterns joined with `|`; short all-caps terms (US, EMEA, ...) are
-/// wrapped to match case-sensitively inside the case-insensitive regex.
-fn alternation(terms: &[String]) -> String {
+/// Patterns joined with `|`, each with word boundaries on the sides that
+/// start or end with a word character or a group (`U\.S\.` and `c\+\+`
+/// can't have one after their punctuation). Short all-caps terms (US,
+/// EMEA, ...) match case-sensitively inside the case-insensitive regex.
+fn bounded(terms: &[String]) -> String {
     terms
         .iter()
         .map(|t| {
             let caps = t.chars().all(|c| c.is_ascii_uppercase()) && t.len() <= 5;
-            if caps {
+            let inner = if caps {
                 format!("(?-i:{t})")
             } else {
                 format!("(?:{t})")
-            }
+            };
+            let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '(' || c == ')');
+            let pre = if word(t.chars().next()) { r"\b" } else { "" };
+            let post = if word(t.chars().last()) { r"\b" } else { "" };
+            format!("{pre}{inner}{post}")
         })
         .collect::<Vec<_>>()
         .join("|")
-}
-
-fn bounded(terms: &[String]) -> String {
-    format!(r"\b(?:{})\b", alternation(terms))
 }
 
 fn ci_regex(pattern: &str) -> Result<Regex> {
@@ -430,6 +467,8 @@ mod tests {
     #[test]
     fn titles() {
         assert_eq!(reason(&job("Senior Rust Engineer", "Remote", Some(true), "")), "keep");
+        // A keep term ending in punctuation still matches.
+        assert_eq!(reason(&job("C++ Developer", "Remote", Some(true), "")), "keep");
         assert_eq!(reason(&job("Engineering Manager", "Remote", Some(true), "")), "title: manager");
         assert_eq!(reason(&job("Growth Hacker", "Remote", Some(true), "")), "title: growth");
         assert_eq!(reason(&job("Operations Research Scientist", "Remote", Some(true), "")), "keep");
@@ -438,8 +477,8 @@ mod tests {
             "title: not a target role"
         );
         // always_keep beats exclude ("analyst") and the role list ("trader").
-        assert_eq!(reason(&job("Quantitative Analyst - Prediction Markets", "Germany", Some(true), "")), "keep");
-        assert_eq!(reason(&job("Quantitative Trader", "London", Some(true), "")), "keep");
+        assert_eq!(reason(&job("Quantitative Analyst - Prediction Markets", "Remote, Europe", Some(true), "")), "keep");
+        assert_eq!(reason(&job("Quantitative Trader", "Remote, Europe", Some(true), "")), "keep");
         assert_eq!(reason(&job("Operations Research Lead", "Remote, Europe", Some(true), "")), "keep");
         assert_eq!(reason(&job("SEO Optimization Specialist", "Remote", Some(true), "")), "title: seo");
         // Word boundaries: "intern" must not hit "international".
@@ -450,8 +489,15 @@ mod tests {
     fn remote_and_region() {
         assert_eq!(reason(&job("Software Engineer", "Berlin", Some(false), "")), "not remote");
         assert_eq!(reason(&job("Software Engineer", "Remote - US", Some(true), "")), "region: US");
-        assert_eq!(reason(&job("Software Engineer", "Spain, Mexico", Some(true), "")), "keep");
+        assert_eq!(reason(&job("Software Engineer", "Spain, Mexico", Some(true), "")), "region: Mexico");
+        assert_eq!(
+            reason(&job("Software Engineer", "Remote - Poland", Some(true), "")),
+            "region: single country (Poland)"
+        );
+        assert_eq!(reason(&job("Software Engineer", "Germany; Remote, Europe", Some(true), "")), "keep");
         assert_eq!(reason(&job("Software Engineer", "Remote, EMEA", Some(true), "")), "keep");
+        assert_eq!(reason(&job("Software Engineer", "U.S. Remote", Some(true), "")), "region: U.S.");
+        assert_eq!(reason(&job("Software Engineer", "Fairfax, VA", Some(true), "")), "region: VA");
         assert_eq!(
             reason(&job("Software Engineer", "Sydney, New South Wales, Australia", Some(true), "")),
             "region: Australia"
@@ -476,6 +522,34 @@ mod tests {
             .starts_with("region (description)"));
         // Unknown remote flag falls back to the location text.
         assert_eq!(reason(&job("Software Engineer", "Remote (Europe)", None, "")), "keep");
+        // Hybrid and on-site.
+        assert_eq!(reason(&job("Software Engineer", "Hybrid - EMEA", Some(true), "")), "hybrid: hybrid");
+        assert_eq!(reason(&job("Software Engineer", "In-Office", Some(true), "")), "hybrid: in-office");
+        assert_eq!(reason(&job("Programmer (Remote/Onsite)", "Europe", Some(true), "")), "keep");
+        assert!(reason(&job(
+            "Software Engineer",
+            "Remote, Europe",
+            Some(true),
+            "We operate on a hybrid schedule, working from the office Monday through Thursday."
+        ))
+        .starts_with("hybrid (description)"));
+        assert_eq!(
+            reason(&job(
+                "Software Engineer",
+                "Remote, Europe",
+                Some(true),
+                "Our remote, hybrid and in-office collaboration spaces vary by role."
+            )),
+            "keep"
+        );
+        let r = |d: &str| reason(&job("Software Engineer", "Remote, Europe", Some(true), d));
+        assert!(r("We embrace a hybrid work model that fosters in-person time.").starts_with("hybrid"));
+        assert!(r("This is a Hybrid role, reporting to the manager.").starts_with("hybrid"));
+        assert!(r("Location-based hybrid policy: we expect all staff to be in one of our offices.")
+            .starts_with("hybrid"));
+        assert_eq!(r("Flexible Work Arrangements: choose between remote, office, or hybrid work."), "keep");
+        assert_eq!(r("Flexible and hybrid working options."), "keep");
+        assert_eq!(r("The FDE is a hybrid role at the intersection of engineering and business."), "keep");
         assert_eq!(reason(&job("Software Engineer", "Paris", None, "")), "not remote");
     }
 

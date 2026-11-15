@@ -12,8 +12,17 @@ pub struct Ashby;
 struct AshbyJob {
     id: String,
     title: String,
+    /// Older API field; current responses use `location`.
     #[serde(default, rename = "locationName")]
     location_name: Option<String>,
+    #[serde(default)]
+    location: Option<String>,
+    #[serde(default, rename = "secondaryLocations")]
+    secondary_locations: Option<Vec<SecondaryLocation>>,
+    /// "Remote" | "Hybrid" | "OnSite"; more precise than `isRemote`, which
+    /// is also true for hybrid roles.
+    #[serde(default, rename = "workplaceType")]
+    workplace_type: Option<String>,
     #[serde(default, rename = "departmentName")]
     department_name: Option<String>,
     #[serde(default, rename = "jobUrl")]
@@ -24,6 +33,12 @@ struct AshbyJob {
     is_remote: Option<bool>,
     #[serde(default, rename = "descriptionPlain")]
     description_plain: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct SecondaryLocation {
+    #[serde(default)]
+    location: Option<String>,
 }
 
 #[async_trait(?Send)]
@@ -56,14 +71,27 @@ impl AtsAdapter for Ashby {
                 .job_url
                 .clone()
                 .unwrap_or_else(|| format!("https://jobs.ashbyhq.com/{slug}/{}", j.id));
+            let location = j
+                .location
+                .or(j.location_name)
+                .into_iter()
+                .chain(j.secondary_locations.into_iter().flatten().filter_map(|l| l.location))
+                .filter(|l| !l.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("; ");
+            let remote = match j.workplace_type.as_deref() {
+                Some("Remote") => Some(true),
+                Some("Hybrid" | "OnSite") => Some(false),
+                _ => j.is_remote,
+            };
             out.push(AdapterJob {
                 external_id: j.id,
                 title: j.title,
-                location: j.location_name,
+                location: Some(location).filter(|l| !l.is_empty()),
                 department: j.department_name,
                 apply_url,
                 description: j.description_plain,
-                remote: j.is_remote,
+                remote,
                 posted_at: j.published_at,
                 raw_json,
             });

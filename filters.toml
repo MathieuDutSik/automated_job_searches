@@ -2,8 +2,9 @@
 # first rule it fails becomes its exclusion reason:
 #
 #   1. title   — must match a `keep` pattern and no `exclude` pattern
-#   2. remote  — must be remote
-#   3. region  — must not be restricted to a region outside `allow`
+#   2. remote  — must be remote, and not hybrid or on-site
+#   3. region  — location must be open-to-all, Europe-wide or EMEA, not
+#                a single country or a region outside Europe
 #   4. salary  — when a salary is stated, its top must reach `min_usd`
 #
 # Patterns are regexes matched case-insensitively at word boundaries,
@@ -66,12 +67,37 @@ exclude = [
 # A job with no remote flag counts as remote when its location or title
 # contains one of these.
 unknown_ok_if = ['remote', 'anywhere', 'worldwide', 'work from home', 'telecommute']
+# A location or title with one of these is hybrid: excluded.
+hybrid_location = ['hybrid']
+# On-site markers: excluded unless the location also says remote
+# ("Remote/Onsite" is fine).
+onsite_location = ['on-?site', 'in[- ]office', 'office[- ]based']
+# Description phrases that make a remote-flagged job hybrid or on-site.
+hybrid_description = [
+    # Phrasings that state a requirement. A bare "hybrid work" also shows
+    # up in "choose between remote, office or hybrid work", so it's not
+    # enough on its own.
+    'we\s+(embrace|operate|follow|work|have)\s+(on\s+|in\s+)?a\s+hybrid',
+    'hybrid\s+(policy|schedule)',
+    'this\s+is\s+an?\s+(hybrid|on-?site|office[- ]based|in[- ]office)\s+(role|position|job)\s*(,|\.|based|located|in\b|out\s+of|reporting|requiring)',
+    '(this|the)\s+(role|position|job)\s+is\s+(a\s+)?(hybrid|on-?site|office[- ]based|in[- ]office)\s*(role|position)?\s*(,|\.|based|located|in\b|out\s+of|reporting|requiring|with\s+\d)',
+    '\b(\d|one|two|three|four|five)\s+days?\s+(a|per|each)\s+week\s+(in|at|from)\s+(the|our)\s+(office|hq|headquarters)',
+    '(in|from)\s+(the|our)\s+office\s+(\d|one|two|three|four|five)\s+days',
+    'working\s+from\s+(the|our)\s+office\s+(monday|tuesday|wednesday|thursday|friday)',
+    'expect(ed)?\s+(all\s+)?(staff|employees|you|everyone)\s+to\s+be\s+in\s+(one\s+of\s+)?(the|our)\s+offices?',
+]
 
 [region]
-# Locations that are fine for you (Europe / EMEA, plus open-to-all).
+# Locations that are fine for you: multi-country regions and open-to-all.
+# A location naming one of these passes the region check.
 allow = [
     'worldwide', 'anywhere', 'global', 'globally', 'international',
     'europe', 'european', 'EMEA', 'EU', 'EEA', 'CET', 'CEST',
+]
+# Single European countries and cities. A remote job tied to one of them
+# (e.g. "Remote - Germany") usually needs residence there: excluded
+# unless the location also names an `allow` region.
+single_country = [
     'albania', 'andorra', 'austria', 'belarus', 'belgium', 'bosnia',
     'bulgaria', 'croatia', 'cyprus', 'czech\w*', 'czechia', 'denmark',
     'estonia', 'finland', 'france', 'germany', 'greece', 'hungary',
@@ -83,7 +109,8 @@ allow = [
     'great britain', 'scotland', 'UK',
     'london', 'berlin', 'paris', 'amsterdam', 'madrid', 'barcelona',
     'lisbon', 'warsaw', 'prague', 'vienna', 'zurich', 'dublin',
-    'stockholm', 'copenhagen', 'zagreb', 'munich', 'milan',
+    'stockholm', 'copenhagen', 'zagreb', 'munich', 'milan', 'edinburgh',
+    'sofia', 'bucharest', 'budapest', 'athens', 'krakow', 'oslo', 'helsinki',
 ]
 # Locations that restrict a job to somewhere else. A location naming one
 # of these and nothing from `allow` excludes the job.
@@ -106,6 +133,22 @@ block = [
     'new york', 'san francisco', 'california', 'texas', 'seattle',
     'boston', 'chicago', 'austin', 'toronto', 'vancouver', 'montreal',
     'EST', 'PST', 'PT', 'ET', 'CST',
+    'bay area', 'silicon valley',
+    'honduras', 'el salvador', 'nicaragua', 'cuba', 'jamaica', 'haiti',
+    'trinidad', 'belize', 'guyana', 'suriname', 'bahamas', 'barbados',
+    'syria\w*', 'syrian arab republic', 'iraq', 'iran', 'yemen', 'oman',
+    'bahrain', 'kuwait', 'afghanistan', 'palestine', 'myanmar', 'cambodia',
+    'laos', 'mongolia', 'kyrgyzstan', 'tajikistan', 'turkmenistan',
+    'zimbabwe', 'zambia', 'tanzania', 'cameroon', 'senegal', 'ivory coast',
+    "c[oô]te d'ivoire", 'botswana', 'namibia', 'mozambique', 'angola',
+    'madagascar', 'mauritius', 'sudan', 'libya', 'somalia', 'malawi',
+    'benin', 'togo', 'mali', 'niger', 'burkina faso', 'congo', 'gabon',
+    # US states, upper case only ("OR" left out: "Austin OR Remote").
+    'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DC', 'DE', 'FL', 'GA', 'HI',
+    'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN',
+    'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH',
+    'OK', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV',
+    'WI', 'WY',
 ]
 # Description phrases that restrict the job to a region. `{BLOCK}` stands
 # for any `block` term. Only used when the location names no `allow` term.

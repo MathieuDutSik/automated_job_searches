@@ -69,8 +69,10 @@ ajs filter                              # re-check every open job against filter
 ajs list jobs --excluded                # only excluded jobs, each with its reason
 ajs list jobs --unfiltered              # ignore the filter
 # Rules in filters.toml, checked in order: title (target roles, excluded
-# words), remote, region (Europe/EMEA or worldwide; location first, then
-# phrases like "must be based in the US" in the description), salary (top
+# words, always-kept quant/optimisation titles), remote (not hybrid or
+# on-site), region (worldwide, Europe or EMEA — not a single country;
+# location first, then phrases like "must be based in the US", "US
+# citizen" or "security clearance" in the description), salary (top
 # of the stated range below `min_usd`, converted to USD per year). The
 # first failed rule is the reason. crawl / sync / import / resolve re-check
 # every open job by themselves when they finish.
