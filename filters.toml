@@ -23,6 +23,17 @@ keep = [
     'algorithms?', 'cryptograph\w*', 'hpc', 'scientific', 'numerical',
     'computational', 'formal verification', 'quant(itative)? (researcher|developer)',
 ]
+# Quantitative and optimisation roles: kept on title even when an
+# `exclude` word (analyst, lead, manager, ...) is present or no `keep`
+# pattern matches. Remote / region / salary rules still apply.
+always_keep = [
+    'quantitative (analyst|researcher|developer|engineer|trader|modell?er)',
+    'quant (analyst|researcher|developer|engineer|trader)',
+    'operations research',
+    'optimi[sz]ation (engineer|scientist|researcher|developer)',
+    '(mathematical|numerical|combinatorial|convex|discrete|stochastic) optimi[sz]ation',
+    'algorithms? researcher', 'mathematical modell?er', 'solver (engineer|developer)',
+]
 # Checked first: any match excludes, even if a keep pattern matches too.
 exclude = [
     'manager', 'management', 'director', 'head of', 'vp', 'vice president',
@@ -104,6 +115,9 @@ description_restrictions = [
     '(authori[sz]ed|eligible|legally able|permitted)\s+to\s+work\s+in\s+(the\s+)?{BLOCK}',
     '(open|available)\s+(only\s+)?to\s+(candidates|applicants|residents)\s+(in|from|of)\s+(the\s+)?{BLOCK}',
     '(only|exclusively)\s+(hiring|accepting|considering)\s+(candidates\s+|applicants\s+)?(in|from)\s+(the\s+)?{BLOCK}',
+    '{BLOCK}\s+citizens?(hip)?\b',
+    '(secret|security|top[- ]secret|TS/SCI|government)\s+clearance',
+    'clearance\s*:?\s*(secret|top[- ]secret|TS)\b',
 ]
 
 [salary]

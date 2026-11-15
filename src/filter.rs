@@ -30,6 +30,8 @@ struct Config {
 struct TitleConfig {
     keep: Vec<String>,
     exclude: Vec<String>,
+    #[serde(default)]
+    always_keep: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -53,6 +55,8 @@ struct SalaryConfig {
 pub struct Rules {
     title_keep: Regex,
     title_exclude: Regex,
+    /// None when `always_keep` is empty.
+    title_always: Option<Regex>,
     remote_text: Regex,
     region_allow: Regex,
     region_block: Regex,
@@ -86,6 +90,11 @@ impl Rules {
         Ok(Self {
             title_keep: ci_regex(&bounded(&cfg.title.keep))?,
             title_exclude: ci_regex(&bounded(&cfg.title.exclude))?,
+            title_always: if cfg.title.always_keep.is_empty() {
+                None
+            } else {
+                Some(ci_regex(&bounded(&cfg.title.always_keep))?)
+            },
             remote_text: ci_regex(&bounded(&cfg.remote.unknown_ok_if))?,
             region_allow: ci_regex(&format!(r"\b(?:{})\b", alternation(&cfg.region.allow)))?,
             region_block: ci_regex(&format!(r"\b(?:{block_alt})\b"))?,
@@ -102,11 +111,14 @@ impl Rules {
 
     pub fn evaluate(&self, job: &FilterInput) -> Verdict {
         let title = job.title.as_str();
-        if let Some(m) = self.title_exclude.find(title) {
-            return Verdict::Exclude(format!("title: {}", m.as_str().to_lowercase()));
-        }
-        if !self.title_keep.is_match(title) {
-            return Verdict::Exclude("title: not a target role".to_string());
+        let always = self.title_always.as_ref().is_some_and(|re| re.is_match(title));
+        if !always {
+            if let Some(m) = self.title_exclude.find(title) {
+                return Verdict::Exclude(format!("title: {}", m.as_str().to_lowercase()));
+            }
+            if !self.title_keep.is_match(title) {
+                return Verdict::Exclude("title: not a target role".to_string());
+            }
         }
 
         let location = job.location.as_deref().unwrap_or("");
@@ -425,6 +437,11 @@ mod tests {
             reason(&job("Office Coordinator", "Remote", Some(true), "")),
             "title: not a target role"
         );
+        // always_keep beats exclude ("analyst") and the role list ("trader").
+        assert_eq!(reason(&job("Quantitative Analyst - Prediction Markets", "Germany", Some(true), "")), "keep");
+        assert_eq!(reason(&job("Quantitative Trader", "London", Some(true), "")), "keep");
+        assert_eq!(reason(&job("Operations Research Lead", "Remote, Europe", Some(true), "")), "keep");
+        assert_eq!(reason(&job("SEO Optimization Specialist", "Remote", Some(true), "")), "title: seo");
         // Word boundaries: "intern" must not hit "international".
         assert_eq!(reason(&job("Software Engineer, International", "Remote", Some(true), "")), "keep");
     }
@@ -452,6 +469,10 @@ mod tests {
         ))
         .starts_with("region (description)"));
         assert!(reason(&job("Software Engineer", "Remote", Some(true), "This role is LATAM-only."))
+            .starts_with("region (description)"));
+        assert!(reason(&job("Software Engineer", "Remote", Some(true), "Required Clearance: Secret"))
+            .starts_with("region (description)"));
+        assert!(reason(&job("Software Engineer", "Remote", Some(true), "Must be a US citizen."))
             .starts_with("region (description)"));
         // Unknown remote flag falls back to the location text.
         assert_eq!(reason(&job("Software Engineer", "Remote (Europe)", None, "")), "keep");

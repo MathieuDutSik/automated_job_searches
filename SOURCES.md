@@ -158,6 +158,10 @@ Personio, JazzHR, Teamtailor, Pinpoint, Comeet.
 queries through a web-search engine, classifying each returned URL, and
 upserting matching slugs as new `companies` rows that `sync` will then
 hit. Query templates per ATS live in `src/discover.rs::PLANS`.
+Greenhouse, Ashby and Lever also get optimisation queries
+(`"operations research"`, `"optimization engineer"`, `"mixed integer"`):
+those roles are rare and the aggregator crawlers almost never surface
+them. Their first run (2026-11-15, Brave) added 114 companies.
 
 ### Available engines (`--engine <name>`)
 
