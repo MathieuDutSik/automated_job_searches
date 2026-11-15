@@ -12,16 +12,11 @@ use anyhow::{Context, Result};
 use regex::{Regex, RegexBuilder};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
-use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::OnceLock;
 use tracing::info;
 
 use crate::db::{Db, FilterInput};
-
-/// Bump when the evaluation logic changes, so stored verdicts are redone
-/// even if `filters.toml` didn't change.
-const LOGIC_VERSION: &str = "1";
 
 #[derive(Deserialize)]
 struct Config {
@@ -64,9 +59,6 @@ pub struct Rules {
     region_desc: Vec<Regex>,
     min_usd: f64,
     fx: HashMap<String, f64>,
-    /// Hash of the config text and LOGIC_VERSION, stored in `meta` to tell
-    /// whether stored verdicts are current.
-    pub fingerprint: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -84,9 +76,6 @@ impl Rules {
 
     pub fn parse(text: &str) -> Result<Self> {
         let cfg: Config = toml::from_str(text)?;
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        text.hash(&mut h);
-        LOGIC_VERSION.hash(&mut h);
         let block_alt = alternation(&cfg.region.block);
         let region_desc = cfg
             .region
@@ -108,7 +97,6 @@ impl Rules {
                 .into_iter()
                 .map(|(k, v)| (k.to_ascii_uppercase(), v))
                 .collect(),
-            fingerprint: format!("{:016x}", h.finish()),
         })
     }
 
@@ -374,13 +362,11 @@ pub struct FilterReport {
     pub by_rule: BTreeMap<String, u64>,
 }
 
-/// Score open jobs. With `force`, or when the rules changed since the
-/// last run, every open job is re-scored; otherwise only jobs without a
-/// verdict yet.
-pub fn apply(db: &Db, rules: &Rules, force: bool) -> Result<FilterReport> {
-    let stale = db.get_meta("filter_fingerprint")?.as_deref() != Some(rules.fingerprint.as_str());
-    let all = force || stale;
-    let jobs = db.jobs_for_filter(all)?;
+/// Score every open job. A sync can change a job's remote flag, location
+/// or description, so verdicts are always recomputed rather than only for
+/// new jobs; all open jobs take about a second.
+pub fn apply(db: &Db, rules: &Rules) -> Result<FilterReport> {
+    let jobs = db.jobs_for_filter()?;
     let mut report = FilterReport::default();
     let mut verdicts = Vec::with_capacity(jobs.len());
     for job in &jobs {
@@ -397,8 +383,7 @@ pub fn apply(db: &Db, rules: &Rules, force: bool) -> Result<FilterReport> {
         verdicts.push((job.id, v));
     }
     db.store_filter_verdicts(&verdicts)?;
-    db.set_meta("filter_fingerprint", &rules.fingerprint)?;
-    info!(scored = report.scored, kept = report.kept, excluded = report.excluded, all, "filter applied");
+    info!(scored = report.scored, kept = report.kept, excluded = report.excluded, "filter applied");
     Ok(report)
 }
 
@@ -450,6 +435,10 @@ mod tests {
         assert_eq!(reason(&job("Software Engineer", "Remote - US", Some(true), "")), "region: US");
         assert_eq!(reason(&job("Software Engineer", "Spain, Mexico", Some(true), "")), "keep");
         assert_eq!(reason(&job("Software Engineer", "Remote, EMEA", Some(true), "")), "keep");
+        assert_eq!(
+            reason(&job("Software Engineer", "Sydney, New South Wales, Australia", Some(true), "")),
+            "region: Australia"
+        );
         // Lowercase "us" in text is a word, not the country.
         assert_eq!(
             reason(&job("Software Engineer", "Remote", Some(true), "Join us to build compilers.")),

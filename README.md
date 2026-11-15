@@ -72,8 +72,8 @@ ajs list jobs --unfiltered              # ignore the filter
 # words), remote, region (Europe/EMEA or worldwide; location first, then
 # phrases like "must be based in the US" in the description), salary (top
 # of the stated range below `min_usd`, converted to USD per year). The
-# first failed rule is the reason. crawl / sync / import / resolve check
-# new jobs by themselves, and every open job when filters.toml changed.
+# first failed rule is the reason. crawl / sync / import / resolve re-check
+# every open job by themselves when they finish.
 
 # Inspect the data
 ajs list companies --limit 50           # flat list of companies

@@ -9,8 +9,9 @@
 # Patterns are regexes matched case-insensitively at word boundaries,
 # except all-caps terms of up to 5 letters in the region lists (US, USA,
 # UK, EU, LATAM, APAC, EMEA, ...), which match case-sensitively so `US`
-# doesn't hit the word "us". Edit this file and the next
-# crawl/sync/filter re-checks every open job.
+# doesn't hit the word "us". Avoid terms that are part of other place
+# names ("wales" is in "New South Wales", "england" in "New England").
+# Edit this file and the next crawl/sync/filter re-checks every open job.
 
 [title]
 # Roles you want: software engineering, research / maths.
@@ -68,7 +69,7 @@ allow = [
     'netherlands', 'north macedonia', 'macedonia', 'norway', 'poland',
     'portugal', 'romania', 'san marino', 'serbia', 'slovakia', 'slovenia',
     'spain', 'sweden', 'switzerland', 'ukraine', 'united kingdom',
-    'great britain', 'england', 'scotland', 'wales', 'UK',
+    'great britain', 'scotland', 'UK',
     'london', 'berlin', 'paris', 'amsterdam', 'madrid', 'barcelona',
     'lisbon', 'warsaw', 'prague', 'vienna', 'zurich', 'dublin',
     'stockholm', 'copenhagen', 'zagreb', 'munich', 'milan',

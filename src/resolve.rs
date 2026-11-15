@@ -83,9 +83,15 @@ pub async fn run(db: &Db, include_attempted: bool) -> Result<(ResolveReport, Vec
                 let slug_label = format!("{}/{}", ats.kind.as_str(), ats.slug);
                 info!(company = %name, from = %host_slug, to = %slug_label, page = %page, "resolved");
                 report.resolved += 1;
-                match db.upsert_company(Some(&name), ats.kind, &ats.slug, SOURCE, Some(&page)) {
+                // No name hint: an already-known company keeps its name. The
+                // `other` row's name (often an HN post title) only names a
+                // company this pass creates.
+                match db.upsert_company(None, ats.kind, &ats.slug, SOURCE, Some(&page)) {
                     Ok((id, is_new)) => {
                         if is_new {
+                            if let Err(e) = db.set_company_name(id, &name) {
+                                warn!(error = %e, slug = %ats.slug, "naming company failed");
+                            }
                             report.companies_new += 1;
                             fresh.push(Fresh {
                                 kind: ats.kind,

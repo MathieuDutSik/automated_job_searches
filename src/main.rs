@@ -93,9 +93,8 @@ enum Cmd {
     },
     /// Check open jobs against the rules in filters.toml (title, remote,
     /// region, salary) and store a keep/exclude verdict with the reason.
-    /// `list jobs` then hides excluded jobs. Runs by itself after crawl,
-    /// sync, import and resolve for new jobs, and for every open job when
-    /// the rules changed; `ajs filter` re-checks everything.
+    /// `list jobs` then hides excluded jobs. Also runs by itself after
+    /// crawl, sync, import and resolve.
     Filter,
     /// List rows from the database
     List {
@@ -468,7 +467,7 @@ async fn run() -> Result<()> {
         }
         Cmd::Filter => {
             let rules = filter::Rules::load(&cli.filters)?;
-            let r = filter::apply(&db, &rules, true)?;
+            let r = filter::apply(&db, &rules)?;
             println!(
                 "filter: {} open jobs checked, {} kept, {} excluded",
                 r.scored, r.kept, r.excluded
@@ -573,14 +572,13 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
-/// Score new jobs (or all, if the rules changed) after a command that
-/// adds jobs. A missing or broken rules file only warns: it shouldn't
+/// Re-score every open job after a command that adds or updates jobs. A missing or broken rules file only warns: it shouldn't
 /// fail the crawl or sync that just ran.
 fn auto_filter(db: &Db, path: &std::path::Path) {
     if !path.exists() {
         return;
     }
-    match filter::Rules::load(path).and_then(|rules| filter::apply(db, &rules, false)) {
+    match filter::Rules::load(path).and_then(|rules| filter::apply(db, &rules)) {
         Ok(r) if r.scored > 0 => println!(
             "filter: {} jobs checked, {} kept, {} excluded",
             r.scored, r.kept, r.excluded

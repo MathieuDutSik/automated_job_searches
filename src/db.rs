@@ -368,16 +368,15 @@ impl Db {
         Ok(rows)
     }
 
-    /// Open jobs to score: all of them, or only those without a verdict.
-    pub fn jobs_for_filter(&self, all: bool) -> Result<Vec<FilterInput>> {
+    /// Open jobs to score.
+    pub fn jobs_for_filter(&self) -> Result<Vec<FilterInput>> {
         let mut stmt = self.conn.prepare(
             "SELECT j.id, j.title, j.location, j.remote, j.description, j.raw_json
                FROM jobs j
-              WHERE j.closed_at IS NULL
-                AND (?1 OR j.id NOT IN (SELECT job_id FROM job_filter))",
+              WHERE j.closed_at IS NULL",
         )?;
         let rows = stmt
-            .query_map(params![all], |r| {
+            .query_map([], |r| {
                 Ok(FilterInput {
                     id: r.get(0)?,
                     title: r.get(1)?,
@@ -412,17 +411,10 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
-        Ok(self
-            .conn
-            .query_row("SELECT value FROM meta WHERE key = ?", params![key], |r| r.get(0))
-            .optional()?)
-    }
-
-    pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
+    pub fn set_company_name(&self, company_id: i64, name: &str) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO meta(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![key, value],
+            "UPDATE companies SET name = ? WHERE id = ?",
+            params![name, company_id],
         )?;
         Ok(())
     }
