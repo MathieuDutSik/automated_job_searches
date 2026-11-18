@@ -50,6 +50,42 @@ pub trait AtsAdapter {
             complete: true,
         })
     }
+
+    /// The company's display name as the ATS shows it. Called by sync
+    /// only for companies stored without a proper name (see
+    /// `needs_name`), so at most one extra request per such company.
+    async fn company_name(&self, _slug: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+}
+
+/// True when a stored company name is a placeholder: the all-lowercase
+/// ATS slug that `discover` and `import` store ("wehrtyou"), or an HN post
+/// title used as a name. A slug with capitals ("DeepL") is taken as the
+/// real name, so it isn't looked up on every sync.
+pub fn needs_name(name: &str, slug: &str) -> bool {
+    (name == slug && !slug.chars().any(|c| c.is_ascii_uppercase())) || is_messy_name(name)
+}
+
+/// An HN post title rather than a company name ("Tether - https://… -
+/// we are hiring", "Addepar/ Software Engineering Manager/ NYC-Hybrid").
+pub fn is_messy_name(name: &str) -> bool {
+    name.contains("http") || name.contains(" | ") || name.contains("/ ") || name.len() > 60
+}
+
+/// The decoded `<title>` of an HTML page, or None on 404 / no title.
+pub(crate) async fn page_title(client: &reqwest::Client, url: &str) -> Result<Option<String>> {
+    let resp = client.get(url).send().await.with_context(|| format!("GET {url}"))?;
+    if resp.status().as_u16() == 404 {
+        return Ok(None);
+    }
+    let html = resp.error_for_status()?.text().await?;
+    let title = html
+        .split_once("<title>")
+        .and_then(|(_, rest)| rest.split_once("</title>"))
+        .map(|(t, _)| html_to_text(t))
+        .filter(|t| !t.is_empty());
+    Ok(title)
 }
 
 #[derive(Debug, Default)]
@@ -143,6 +179,18 @@ pub async fn sync_one_slug(
                 closed,
                 "synced"
             );
+            if needs_name(display_name, slug) {
+                match adapter.company_name(slug).await {
+                    Ok(Some(name)) if !is_messy_name(&name) && name != display_name => {
+                        info!(slug, name = %name, "company named");
+                        if let Err(e) = db.set_company_name(company_id, &name) {
+                            warn!(error = %e, slug, "naming company failed");
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => warn!(error = %e, slug, "company name lookup failed"),
+                }
+            }
         }
         Err(e) => {
             if e.to_string().contains("404") {
@@ -216,4 +264,20 @@ pub(crate) fn html_to_text(html: &str) -> String {
     let frag = scraper::Html::parse_fragment(&decoded);
     let text = frag.root_element().text().collect::<Vec<_>>().join(" ");
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_names() {
+        assert!(needs_name("wehrtyou", "wehrtyou"));
+        assert!(!needs_name("DeepL", "DeepL"));
+        assert!(needs_name("Addepar/ Softare Engineering Manager/ NYC-Hybrid/ Full-time", "addepar1"));
+        assert!(needs_name("Tether - https://tether.io/ - we are hiring", "tether"));
+        assert!(needs_name("Remote (US) | Close | Senior Engineer", "close"));
+        assert!(!needs_name("Hudson River Trading", "wehrtyou"));
+        assert!(!needs_name("Quadrature Capital Limited", "quadrature"));
+    }
 }

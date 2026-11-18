@@ -52,6 +52,15 @@ impl AtsAdapter for Greenhouse {
         AtsKind::Greenhouse
     }
 
+    async fn company_name(&self, slug: &str) -> Result<Option<String>> {
+        let client = http::client()?;
+        let url = format!("https://boards-api.greenhouse.io/v1/boards/{slug}");
+        let Some(v) = fetch_value_or_none_on_404(&client, &url).await? else {
+            return Ok(None);
+        };
+        Ok(v.get("name").and_then(|n| n.as_str()).map(|s| s.trim().to_string()))
+    }
+
     async fn fetch_jobs(&self, slug: &str) -> Result<Vec<AdapterJob>> {
         let url = format!("https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true");
         let client = http::client()?;

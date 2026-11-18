@@ -38,6 +38,12 @@ impl AtsAdapter for Lever {
         AtsKind::Lever
     }
 
+    /// The API has no company name; the public board page's title is it.
+    async fn company_name(&self, slug: &str) -> Result<Option<String>> {
+        let client = http::client()?;
+        crate::adapters::page_title(&client, &format!("https://jobs.lever.co/{slug}")).await
+    }
+
     async fn fetch_jobs(&self, slug: &str) -> Result<Vec<AdapterJob>> {
         let url = format!("https://api.lever.co/v0/postings/{slug}?mode=json");
         let client = http::client()?;

@@ -47,6 +47,14 @@ impl AtsAdapter for Ashby {
         AtsKind::Ashbyhq
     }
 
+    /// The API has no organisation name; the public board page's title is
+    /// "{Name} Jobs".
+    async fn company_name(&self, slug: &str) -> Result<Option<String>> {
+        let client = http::client()?;
+        let title = crate::adapters::page_title(&client, &format!("https://jobs.ashbyhq.com/{slug}")).await?;
+        Ok(title.map(|t| t.trim_end_matches(" Jobs").trim().to_string()))
+    }
+
     async fn fetch_jobs(&self, slug: &str) -> Result<Vec<AdapterJob>> {
         let url = format!(
             "https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true"

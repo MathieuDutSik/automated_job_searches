@@ -34,6 +34,15 @@ impl AtsAdapter for Recruitee {
         AtsKind::Recruitee
     }
 
+    async fn company_name(&self, slug: &str) -> Result<Option<String>> {
+        let client = http::client()?;
+        let url = format!("https://{slug}.recruitee.com/api/offers/");
+        let Some(v) = fetch_value_or_none_on_404(&client, &url).await? else {
+            return Ok(None);
+        };
+        Ok(v.pointer("/offers/0/company_name").and_then(|n| n.as_str()).map(|s| s.trim().to_string()))
+    }
+
     async fn fetch_jobs(&self, slug: &str) -> Result<Vec<AdapterJob>> {
         let url = format!("https://{slug}.recruitee.com/api/offers/");
         let client = http::client()?;

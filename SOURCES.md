@@ -161,6 +161,15 @@ flag, and the per-job raw JSON.
   The `apply.workable.com/j/{code}` short link names no account and is
   not classified.
 
+**Company names.** `discover` and `import` store a company under its ATS
+slug (`wehrtyou`), and HN-sourced names are often post titles. When a
+sync finds such a placeholder (an all-lowercase slug, or a name with a
+URL, ` | ` or `/ `, or over 60 characters), it asks the ATS once for the
+display name: Greenhouse `GET /v1/boards/{slug}` → `name`; Ashby and
+Lever have no name in their APIs, so the public board page's `<title>`
+("{Name} Jobs" / "{Name}"); Recruitee `offers[0].company_name`; Workable
+widget `name`. Workday and BambooHR aren't looked up.
+
 The catch-all `AtsKind::Other` covers anything not matching a known ATS —
 company careers pages, sub-aggregators (`jobs.solana.com`, EU Greenhouse
 mirrors, ...). These aren't dropped; they're stored with the URL host as

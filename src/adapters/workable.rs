@@ -28,6 +28,19 @@ impl AtsAdapter for Workable {
         AtsKind::Workable
     }
 
+    /// Account slugs only; job-board companies are named by the crawler.
+    async fn company_name(&self, slug: &str) -> Result<Option<String>> {
+        if slug.starts_with(BOARD_SLUG_PREFIX) {
+            return Ok(None);
+        }
+        let client = http::client()?;
+        let url = format!("https://apply.workable.com/api/v1/widget/accounts/{slug}");
+        let Some(v) = fetch_value_or_none_on_404(&client, &url).await? else {
+            return Ok(None);
+        };
+        Ok(v.get("name").and_then(|n| n.as_str()).map(|s| s.trim().to_string()))
+    }
+
     async fn fetch_jobs(&self, slug: &str) -> Result<Vec<AdapterJob>> {
         Ok(self.fetch(slug).await?.jobs)
     }
