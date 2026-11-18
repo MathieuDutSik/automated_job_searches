@@ -133,7 +133,7 @@ block = [
     'new york', 'san francisco', 'california', 'texas', 'seattle',
     'boston', 'chicago', 'austin', 'toronto', 'vancouver', 'montreal',
     'EST', 'PST', 'PT', 'ET', 'CST',
-    'bay area', 'silicon valley',
+    'bay area', 'silicon valley', 'remote_us', 'us_remote',
     'honduras', 'el salvador', 'nicaragua', 'cuba', 'jamaica', 'haiti',
     'trinidad', 'belize', 'guyana', 'suriname', 'bahamas', 'barbados',
     'syria\w*', 'syrian arab republic', 'iraq', 'iran', 'yemen', 'oman',

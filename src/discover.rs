@@ -24,8 +24,8 @@ pub struct DiscoverPlan {
 
 // Besides the generic "Remote" query, the big three ATSes get
 // optimisation / operations-research queries, and they and Workday get
-// quantitative-finance queries: those roles are rare and rarely surface
-// through the aggregator crawlers.
+// quantitative-finance and computational-geometry queries: those roles are
+// rare and rarely surface through the aggregator crawlers.
 //
 // NOTE: Brave's `inurl:` operator silently returns 0 results, so this list
 // avoids it. Brave's `site:` semantics also vary by root: it pulls subdomains
@@ -49,6 +49,10 @@ pub const PLANS: &[DiscoverPlan] = &[
             r#"site:job-boards.greenhouse.io "quantitative researcher""#,
             r#"site:boards.greenhouse.io "quantitative developer""#,
             r#"site:job-boards.greenhouse.io "quantitative developer""#,
+            r#"site:boards.greenhouse.io "computational geometry""#,
+            r#"site:job-boards.greenhouse.io "computational geometry""#,
+            r#"site:boards.greenhouse.io "geometric modeling""#,
+            r#"site:job-boards.greenhouse.io "geometric modeling""#,
         ],
     },
     DiscoverPlan {
@@ -60,6 +64,8 @@ pub const PLANS: &[DiscoverPlan] = &[
             r#"site:jobs.ashbyhq.com "mixed integer""#,
             r#"site:jobs.ashbyhq.com "quantitative researcher""#,
             r#"site:jobs.ashbyhq.com "quantitative developer""#,
+            r#"site:jobs.ashbyhq.com "computational geometry""#,
+            r#"site:jobs.ashbyhq.com "geometric modeling""#,
         ],
     },
     DiscoverPlan {
@@ -71,6 +77,8 @@ pub const PLANS: &[DiscoverPlan] = &[
             r#"site:jobs.lever.co "mixed integer""#,
             r#"site:jobs.lever.co "quantitative researcher""#,
             r#"site:jobs.lever.co "quantitative developer""#,
+            r#"site:jobs.lever.co "computational geometry""#,
+            r#"site:jobs.lever.co "geometric modeling""#,
         ],
     },
     DiscoverPlan {
