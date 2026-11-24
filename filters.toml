@@ -111,6 +111,7 @@ single_country = [
     'lisbon', 'warsaw', 'prague', 'vienna', 'zurich', 'dublin',
     'stockholm', 'copenhagen', 'zagreb', 'munich', 'milan', 'edinburgh',
     'sofia', 'bucharest', 'budapest', 'athens', 'krakow', 'oslo', 'helsinki',
+    'zug', 'baar', 'geneva', 'lausanne', 'basel', 'bern', 'ZG', 'ZH', 'VD',
 ]
 # Locations that restrict a job to somewhere else. A location naming one
 # of these and nothing from `allow` excludes the job.
@@ -134,6 +135,8 @@ block = [
     'boston', 'chicago', 'austin', 'toronto', 'vancouver', 'montreal',
     'EST', 'PST', 'PT', 'ET', 'CST',
     'bay area', 'silicon valley', 'remote_us', 'us_remote',
+    'lat[- ]?am', 'NAMER', 'IND', 'bangalore', 'bengaluru', 'hyderabad', 'pune',
+    'chennai', 'mumbai', 'delhi', 'noida', 'gurgaon', 'gurugram', 'mohali',
     'honduras', 'el salvador', 'nicaragua', 'cuba', 'jamaica', 'haiti',
     'trinidad', 'belize', 'guyana', 'suriname', 'bahamas', 'barbados',
     'syria\w*', 'syrian arab republic', 'iraq', 'iran', 'yemen', 'oman',

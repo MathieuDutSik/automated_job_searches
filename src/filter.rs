@@ -297,6 +297,16 @@ fn salaries_in_text(text: &str, need_context: bool) -> Vec<Money> {
         ))
         .unwrap()
     });
+    // The same amounts with the currency after the number: "40 USD / hr",
+    // "60.000 - 75.000 EUR", "80k €".
+    static AMOUNT_AFTER: OnceLock<Regex> = OnceLock::new();
+    let amount_after = AMOUNT_AFTER.get_or_init(|| {
+        let num = r"\d{1,3}(?:[,.\u{a0} ]\d{3})+|\d+(?:\.\d+)?";
+        Regex::new(&format!(
+            r"\b(?P<a>{num})\s?(?P<ka>[kK]\b)?(?:\s*(?:-|–|—|to)\s*(?P<b>{num})\s?(?P<kb>[kK]\b)?)?\s?(?P<c1>€|£|\b(?:USD|EUR|GBP|CHF|CAD|AUD|NZD|SEK|NOK|DKK|PLN)\b)"
+        ))
+        .unwrap()
+    });
     let context = CONTEXT.get_or_init(|| {
         Regex::new(r"(?i)salary|compensation|\bpay\b|\bpaid\b|base|\bote\b|annual|per\s+(year|annum|month|hour|week)|/\s?(yr|year|mo|month|h|hr|hour)\b|\ba\s+year\b|gross|wage|rate")
             .unwrap()
@@ -305,7 +315,7 @@ fn salaries_in_text(text: &str, need_context: bool) -> Vec<Money> {
     let scale =
         SCALE.get_or_init(|| Regex::new(r"^\s?(?:m|mm|mn|million|b|bn|billion)\b").unwrap());
     let mut out = Vec::new();
-    for caps in amount.captures_iter(text) {
+    for caps in amount.captures_iter(text).chain(amount_after.captures_iter(text)) {
         let whole = caps.get(0).unwrap();
         let after = tail(text, whole.end(), 40);
         let after_l = after.to_ascii_lowercase();
@@ -560,6 +570,9 @@ mod tests {
         assert_eq!(r("What we offer: up to $10/hour, 100% remote"), "salary: up to $21k/yr");
         assert_eq!(r("Salary range: €60.000 - €75.000 gross per year"), "salary: up to $81k/yr");
         assert_eq!(r("Base salary $120k-$160k"), "keep");
+        assert_eq!(r("Compensation: Up to 40 USD / hr"), "salary: up to $83k/yr");
+        assert_eq!(r("Salary: 60.000 - 75.000 EUR gross per year"), "salary: up to $81k/yr");
+        assert_eq!(r("Base salary 150k USD plus equity"), "keep");
         // Not pay: funding, ad spend, investment.
         assert_eq!(r("Our clients have raised over $5B. We spend $40 Million a year on ads."), "keep");
         assert_eq!(r("We provide an initial £250k investment."), "keep");
