@@ -91,7 +91,9 @@ hybrid_description = [
 # Locations that are fine for you: multi-country regions and open-to-all.
 # A location naming one of these passes the region check.
 allow = [
-    'worldwide', 'anywhere', 'global', 'globally', 'international',
+    # Not 'international': titles like "Backend - International" use it
+    # for the product, not the hiring area.
+    'worldwide', 'anywhere', 'global', 'globally',
     'europe', 'european', 'EMEA', 'EU', 'EEA', 'CET', 'CEST',
 ]
 # Single European countries and cities. A remote job tied to one of them
