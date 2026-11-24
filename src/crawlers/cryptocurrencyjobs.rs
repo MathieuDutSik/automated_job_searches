@@ -96,6 +96,7 @@ impl Crawler for CryptocurrencyJobs {
 
             let external_id = ats.external_id.clone().unwrap_or_else(|| apply_url.clone());
             match db.upsert_job(JobUpsert {
+                source: SOURCE,
                 company_id,
                 kind: ats.kind,
                 external_id: &external_id,

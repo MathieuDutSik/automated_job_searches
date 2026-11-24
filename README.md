@@ -108,6 +108,19 @@ populate `companies`, then `sync all` whenever you want fresh job lists
 `closed_at`). `discover` is targeted at specific ATSes (you pick which
 to query) while `crawl` walks general aggregator sites.
 
+Jobs that disappear from their site leave the database:
+
+- `sync` closes the jobs a company's board no longer lists (unless the
+  board only showed part of its list, e.g. Workable company pages).
+- Each job remembers who wrote it last (`jobs.source`: a crawler's name
+  or `sync`). After a crawler run that matched at least one job, the
+  jobs it wrote that it didn't see this time are closed. A run that
+  fails or matches nothing closes nothing, so a broken site doesn't
+  empty the database.
+- crawl / sync / import / resolve delete jobs closed for more than 7
+  days, except the ones you marked `applied`. The grace period lets a
+  job that drops out of one run and returns keep its id and status.
+
 ### Finding the id for `ajs mark`
 
 `<id>` is the integer in the **first column** of `ajs list jobs` — the

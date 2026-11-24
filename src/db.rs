@@ -174,6 +174,9 @@ pub struct CompanyMatch {
 }
 
 pub struct JobUpsert<'a> {
+    /// Who wrote the row last: a crawler's name, or "sync". A crawler
+    /// closes the jobs it wrote that its next successful run doesn't see.
+    pub source: &'a str,
     pub company_id: i64,
     pub kind: AtsKind,
     pub external_id: &'a str,
@@ -200,6 +203,7 @@ impl Db {
         ensure_column(&conn, "jobs", "status", "TEXT NOT NULL DEFAULT 'new'")?;
         ensure_column(&conn, "jobs", "status_changed_at", "TEXT")?;
         ensure_column(&conn, "jobs", "status_note", "TEXT")?;
+        ensure_column(&conn, "jobs", "source", "TEXT")?;
 
         // External-content FTS5 tables report the linked table's row count for
         // COUNT(*) — useless as a "is the index built?" signal. Track with a
@@ -300,15 +304,15 @@ impl Db {
         let (id, is_new) = match existing {
             Some(id) => {
                 tx.execute(
-                    "UPDATE jobs SET last_seen = ?, title = ?, location = ?, department = ?, apply_url = ?, description = COALESCE(?, description), remote = COALESCE(?, remote), posted_at = ?, raw_json = ?, closed_at = NULL WHERE id = ?",
-                    params![now, j.title, j.location, j.department, j.apply_url, j.description, remote_i, j.posted_at, j.raw_json, id],
+                    "UPDATE jobs SET last_seen = ?, title = ?, location = ?, department = ?, apply_url = ?, description = COALESCE(?, description), remote = COALESCE(?, remote), posted_at = ?, raw_json = ?, closed_at = NULL, source = ? WHERE id = ?",
+                    params![now, j.title, j.location, j.department, j.apply_url, j.description, remote_i, j.posted_at, j.raw_json, j.source, id],
                 )?;
                 (id, false)
             }
             None => {
                 tx.execute(
-                    "INSERT INTO jobs (company_id, ats_kind, external_id, title, location, department, apply_url, description, remote, posted_at, first_seen, last_seen, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    params![j.company_id, j.kind.as_str(), j.external_id, j.title, j.location, j.department, j.apply_url, j.description, remote_i, j.posted_at, now, now, j.raw_json],
+                    "INSERT INTO jobs (company_id, ats_kind, external_id, title, location, department, apply_url, description, remote, posted_at, first_seen, last_seen, raw_json, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![j.company_id, j.kind.as_str(), j.external_id, j.title, j.location, j.department, j.apply_url, j.description, remote_i, j.posted_at, now, now, j.raw_json, j.source],
                 )?;
                 (tx.last_insert_rowid(), true)
             }
@@ -321,6 +325,27 @@ impl Db {
     /// `sync_started` as closed. Used by ATS-adapter syncs to reflect job
     /// disappearance: anything we didn't see in the latest fetch is gone.
     /// Returns the number of jobs that were just closed.
+    /// Close the open jobs `source` wrote that it hasn't seen since
+    /// `run_started`, i.e. that its latest run no longer lists.
+    pub fn close_unseen_from_source(&self, source: &str, run_started: &str) -> Result<usize> {
+        let now = Utc::now().to_rfc3339();
+        Ok(self.conn.execute(
+            "UPDATE jobs SET closed_at = ? WHERE source = ? AND closed_at IS NULL AND last_seen < ?",
+            params![now, source, run_started],
+        )?)
+    }
+
+    /// Delete jobs closed before `cutoff` (RFC 3339), with their filter
+    /// verdicts. Jobs marked `applied` are kept as a record.
+    pub fn delete_closed_jobs(&self, cutoff: &str) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let pick = "SELECT id FROM jobs WHERE closed_at IS NOT NULL AND closed_at < ?1 AND status != 'applied'";
+        tx.execute(&format!("DELETE FROM job_filter WHERE job_id IN ({pick})"), params![cutoff])?;
+        let n = tx.execute(&format!("DELETE FROM jobs WHERE id IN ({pick})"), params![cutoff])?;
+        tx.commit()?;
+        Ok(n)
+    }
+
     pub fn mark_unseen_jobs_closed(
         &self,
         company_id: i64,
@@ -731,4 +756,70 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, defn: &str) -> Re
         conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {defn}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job<'a>(company_id: i64, id: &'a str, source: &'a str) -> JobUpsert<'a> {
+        JobUpsert {
+            source,
+            company_id,
+            kind: AtsKind::Other,
+            external_id: id,
+            title: "Engineer",
+            location: None,
+            department: None,
+            apply_url: "https://example.test/job",
+            description: None,
+            remote: None,
+            posted_at: None,
+            raw_json: "{}",
+        }
+    }
+
+    #[test]
+    fn crawler_closes_unlisted_jobs_and_old_closed_jobs_are_deleted() {
+        let db = Db::open(":memory:").unwrap();
+        let (c, _) = db.upsert_company(None, AtsKind::Other, "example.test", "t", None).unwrap();
+        let (gone, _) = db.upsert_job(job(c, "gone", "hn_whoshiring")).unwrap();
+        let (applied, _) = db.upsert_job(job(c, "applied", "hn_whoshiring")).unwrap();
+        let (synced, _) = db.upsert_job(job(c, "synced", SYNC_SOURCE_FOR_TEST)).unwrap();
+        db.set_status(applied, "applied", None).unwrap();
+
+        // A later run of the crawler sees none of its jobs: both close; the
+        // synced job belongs to another source and stays open.
+        let later = (Utc::now() + chrono::Duration::seconds(5)).to_rfc3339();
+        assert_eq!(db.close_unseen_from_source("hn_whoshiring", &later).unwrap(), 2);
+        let open: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM jobs WHERE closed_at IS NULL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(open, 1);
+
+        // Seeing a closed job again reopens it.
+        db.upsert_job(job(c, "gone", "hn_whoshiring")).unwrap();
+        let reopened: Option<String> = db
+            .conn
+            .query_row("SELECT closed_at FROM jobs WHERE id = ?", [gone], |r| r.get(0))
+            .unwrap();
+        assert!(reopened.is_none());
+
+        // Pruning deletes closed jobs, but keeps the applied one.
+        db.close_unseen_from_source("hn_whoshiring", &later).unwrap();
+        let future = (Utc::now() + chrono::Duration::days(1)).to_rfc3339();
+        assert_eq!(db.delete_closed_jobs(&future).unwrap(), 1);
+        let left: Vec<i64> = db
+            .conn
+            .prepare("SELECT id FROM jobs ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(left, vec![applied, synced]);
+    }
+
+    const SYNC_SOURCE_FOR_TEST: &str = "sync";
 }

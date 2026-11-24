@@ -211,8 +211,18 @@ async fn run() -> Result<()> {
             let mut failed = 0usize;
             for crawler in to_run {
                 let run_id = db.start_run(crawler.name())?;
+                let started = chrono::Utc::now().to_rfc3339();
                 match crawler.run(&db).await {
                     Ok(rep) => {
+                        // Jobs this crawler listed before but not now are gone
+                        // from the site. A run that matched nothing (site down,
+                        // layout change, blocked) closes nothing.
+                        if rep.jobs_matched > 0 {
+                            let closed = db.close_unseen_from_source(crawler.name(), &started)?;
+                            if closed > 0 {
+                                info!(source = crawler.name(), closed, "jobs no longer listed, closed");
+                            }
+                        }
                         db.finish_run(
                             run_id,
                             true,
@@ -567,9 +577,25 @@ async fn run() -> Result<()> {
         }
     }
     if refilter {
+        prune_closed(&db);
         auto_filter(&db, &cli.filters);
     }
     Ok(())
+}
+
+/// Days a closed job stays in the database before it's deleted. The grace
+/// period lets a job that drops out of one run and comes back keep its id,
+/// status and note.
+const KEEP_CLOSED_DAYS: i64 = 7;
+
+/// Delete jobs closed more than KEEP_CLOSED_DAYS ago (except `applied`).
+fn prune_closed(db: &Db) {
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(KEEP_CLOSED_DAYS)).to_rfc3339();
+    match db.delete_closed_jobs(&cutoff) {
+        Ok(0) => {}
+        Ok(n) => println!("removed {n} jobs closed more than {KEEP_CLOSED_DAYS} days ago"),
+        Err(e) => tracing::warn!(error = %e, "removing closed jobs failed"),
+    }
 }
 
 /// Re-score every open job after a command that adds or updates jobs. A missing or broken rules file only warns: it shouldn't

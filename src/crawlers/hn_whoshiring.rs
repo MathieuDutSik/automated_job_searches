@@ -153,6 +153,7 @@ fn store_comment(db: &Db, child: &Item, latest: bool, report: &mut CrawlReport) 
 
     let external_id = ats.external_id.clone().unwrap_or_else(|| apply_url.clone());
     match db.upsert_job(JobUpsert {
+        source: SOURCE,
         company_id,
         kind: ats.kind,
         external_id: &external_id,

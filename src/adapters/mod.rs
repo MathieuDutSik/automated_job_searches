@@ -17,6 +17,9 @@ pub mod workday;
 
 pub const POLITENESS_DELAY: Duration = Duration::from_millis(250);
 
+/// `jobs.source` for rows last written by an ATS sync.
+pub const SYNC_SOURCE: &str = "sync";
+
 pub struct AdapterJob {
     pub external_id: String,
     pub title: String,
@@ -141,6 +144,7 @@ pub async fn sync_one_slug(
                 let trimmed_dept = j.department.as_deref().map(str::trim);
                 let trimmed_desc = j.description.as_deref().map(str::trim);
                 let res = db.upsert_job(JobUpsert {
+                    source: SYNC_SOURCE,
                     company_id,
                     kind: adapter.kind(),
                     external_id: &j.external_id,

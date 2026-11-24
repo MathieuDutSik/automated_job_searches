@@ -107,6 +107,7 @@ impl Crawler for WorkingNomads {
                 .map(|l| looks_remote(l) || job.tags.as_deref().is_some_and(looks_remote));
 
             match db.upsert_job(JobUpsert {
+                source: SOURCE,
                 company_id,
                 kind: ats.kind,
                 external_id: &external_id,

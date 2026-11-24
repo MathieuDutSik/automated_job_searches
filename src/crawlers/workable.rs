@@ -127,6 +127,7 @@ fn store_job(db: &Db, job: BoardJob, report: &mut CrawlReport) {
     };
     let j = job.into_adapter_job();
     match db.upsert_job(JobUpsert {
+        source: SOURCE,
         company_id,
         kind: AtsKind::Workable,
         external_id: &j.external_id,
