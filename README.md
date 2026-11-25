@@ -8,6 +8,26 @@ See also: [DESIGN.md](DESIGN.md) for the schema and module layout,
 [SOURCES.md](SOURCES.md) for the list of supported sources and rejected
 candidates.
 
+## Job sites to check in the browser
+
+These sites have relevant jobs but refuse automated access (a bot
+challenge, a blocking robots.txt) or were declined, so `ajs` doesn't
+read them. Check them by hand, or use their own job alerts. When a
+listing names the employer, `ajs import <employer's ATS board URL>` adds
+that company's jobs. Details per site are in
+[SOURCES.md](SOURCES.md#candidates-evaluated-and-rejected).
+
+| Site | Kind of jobs | Why `ajs` can't read it |
+|---|---|---|
+| [Wellfound](https://wellfound.com/jobs) | Startups (formerly AngelList) | Declined: API behind Cloudflare Turnstile, and applying needs your account |
+| [Oxford Knight](https://oxfordknight.co.uk/jobs/) | Quant / tech recruitment agency, some remote | Cloudflare challenge on every page |
+| [eFinancialCareers](https://www.efinancialcareers.com/) | Finance and quant | AWS WAF CAPTCHA on every page |
+| [QuantNet](https://quantnet.com/) | Quant finance | robots.txt disallows all, plus Cloudflare challenge |
+| [Selby Jennings](https://www.selbyjennings.com/) | Quant recruitment agency | Vercel security checkpoint |
+| [startup.jobs](https://startup.jobs/) | Startups | Cloudflare challenge |
+| [Welcome to the Jungle](https://www.welcometothejungle.com/) | Startups, Europe | Listings only rendered by JavaScript |
+| [rustjobs.dev](https://rustjobs.dev/) | Rust | Vercel challenge |
+
 ## Build
 
 ```sh
