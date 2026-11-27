@@ -65,6 +65,22 @@ Greenhouse, which files the job and company under that ATS. No remote
 flag; `MinSalary`/`MaxSalary` are estimates (`SalaryEstimated`) and are
 not used by the salary rule.
 
+### `remotifyeurope`
+
+RemotifyEurope (`remotifyeurope.com`), remote jobs open to Europe.
+Re-evaluated on 2026-11-27: the site moved to Next.js app-router pages
+and the earlier "JS-only" verdict no longer holds. robots.txt allows
+`/listing/` (only `/api/`, `/company/`, `/candidate/`, `/recruiter/`,
+`/rx/` are disallowed) and `/sitemap.xml` lists every live listing
+(~860). Each listing page embeds a schema.org `JobPosting` (title,
+`hiringOrganization`, `datePosted`, `validThrough`, `jobLocationType:
+TELECOMMUTE`, `applicantLocationRequirements` countries, HTML
+description) and links the employer's ATS posting, which files job and
+company under that ATS (`utm_*` stripped). Expired listings are skipped.
+One page a second. Cloudflare runs its passive bot-detection script on
+the site; a 403 or 429 aborts the crawl (recorded as a failed run, so
+nothing is closed).
+
 ### `thehub`
 
 Nordic startup board. Scrapes `https://thehub.io/jobs` for `/jobs/{24-hex-id}`
@@ -341,6 +357,7 @@ but are noted in case that changes.
 | resolve | each company's own site | — | checked per host before every request; 4xx robots.txt = allowed, 5xx/unreachable = host skipped | ✅ authorized where robots.txt allows; 1 request/s |
 | thehub | `/jobs` + detail pages | no | allowed | ✅ authorized (HTML) |
 | openquant | `openquant.co/server-sitemap-index.xml` + `/job/*` pages | sitemap listed in robots.txt | `User-agent: * Allow: /` | ✅ authorized; 1 request/s |
+| remotifyeurope | `remotifyeurope.com/sitemap.xml` + `/listing/*` pages | sitemap + schema.org JobPosting | allowed (`Allow: /`) | ✅ authorized; 1 request/s, stops on 403/429 |
 | workable (crawler) | `jobs.workable.com/sitemap.xml` + `/search/*` pages | sitemap listed in robots.txt | `/search/*` allowed, `/search*?*` disallowed | ✅ authorized — no query strings, so no pagination |
 | web3career | `/remote-jobs` | no | allowed | ⛔ apply links behind a sign-up wall — parked |
 | workingnomads | `/api/exposed_jobs/` + `/job/go/` redirect | public JSON | allowed (empty `Disallow`) | ✅ authorized |
@@ -388,7 +405,6 @@ Aggregators that were triaged and **not** added, with the reason:
 | Site | Why skipped |
 |---|---|
 | `startup.jobs` | Cloudflare managed challenge (`cf-mitigated: challenge`) on every path. Needs headless browser. |
-| `remotifyeurope.com` | Next.js SPA, no `__NEXT_DATA__` blob — jobs only render after JS. |
 | `remoteineurope.com` | Server-rendered `/job/{slug}` exists but apply-URL discovery is hidden behind detail-page UI; revisit later. |
 | `euremotejobs.com` | Front page 200 but `/jobs/` and `/feed/` return 403 — selective anti-bot. |
 | `us.welcometothejungle.com` | Next.js SPA — only nav + one `/companies/` link in initial HTML. |
@@ -413,8 +429,7 @@ Three rough patterns to watch for:
 
 - **Cloudflare / anti-bot** (`startup.jobs`, `trueup.io`, `eu-startups.com`,
   `globallogic.com`) — would need a headless browser to bypass.
-- **JS-only SPAs with no SSR data** (`remotifyeurope.com`,
-  `us.welcometothejungle.com`, `sailonchain.com`, `europeanremote.com`) —
+- **JS-only SPAs with no SSR data** (`us.welcometothejungle.com`, `sailonchain.com`, `europeanremote.com`) —
   same; the SSR HTML doesn't carry the listings.
 - **Rate limiting on first contact** (`workinstartups.com`,
   `remote100k.com`) — may work if you back off, but the SSR HTML on

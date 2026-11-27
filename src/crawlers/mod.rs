@@ -7,6 +7,7 @@ pub mod cryptocurrencyjobs;
 pub mod cryptojobs;
 pub mod hn_whoshiring;
 pub mod openquant;
+pub mod remotifyeurope;
 pub mod thehub;
 pub mod web3career;
 pub mod workable;
@@ -40,6 +41,7 @@ pub fn all() -> Vec<Box<dyn Crawler>> {
         Box::new(cryptojobs::CryptoJobs),
         Box::new(hn_whoshiring::HnWhosHiring),
         Box::new(openquant::OpenQuant),
+        Box::new(remotifyeurope::RemotifyEurope),
         Box::new(thehub::TheHub),
         Box::new(web3career::Web3Career),
         Box::new(workable::WorkableBoard),
